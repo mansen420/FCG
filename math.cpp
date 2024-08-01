@@ -8,11 +8,15 @@ namespace math
     class nvector
     {
     };
+
+    //nr_rows belongs to lhs, nr_cols belongs to rhs!
+    template <int lhs_cols, int rhs_rows>
+    concept multipliable = lhs_cols == rhs_rows;
+
     template <typename T, int n_rows, int n_cols>
     class matrix
     {
         T data[n_rows][n_cols];
-
         public:
 
         //returns pointer to row (use this when mutation is desired)
@@ -60,11 +64,30 @@ namespace math
 
         matrix operator+ (const matrix<T, n_rows, n_cols> rhs) const
         {
-            return this->map([&](int value, int row, int col){return value + rhs(row, col);});
+            return this->map([&](T value, int row, int col){return value + rhs(row, col);});
         }
         matrix operator-() const
         {
             return this->map([](T val, int row, int col){return -val;});
+        }
+        matrix operator-(const matrix<T, n_rows, n_cols> rhs) const
+        {
+            return (*this) + -rhs;
+        }
+
+        template <int nr_rows, int nr_cols>
+        matrix operator*(const matrix<T, nr_rows, nr_cols> rhs) const requires math::multipliable<n_cols, nr_rows>
+        {
+            const matrix& lhs = (*this);
+            const int mul_size = nr_rows; // == n_cols
+            matrix<T, n_rows, nr_cols> result;
+            return result.map([&](T value, int row, int col)
+            {
+                T sum{0};
+                for (size_t i = 0; i < mul_size; ++i)
+                    sum += lhs(row, i) * rhs(i, col);
+                return sum;
+            });
         }
     };
 };
@@ -73,14 +96,15 @@ namespace math
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     using namespace math;
-    matrix<int, 2, 2> m;
-    m.for_each([](int& value, int row, int col){value = row;});
-    m.print(std::cout);
+    matrix<int, 3, 2> m1;
+    m1.for_each([](int& value, int row, int col){value = row;});
     matrix<int, 2, 2> m2;
     m2.for_each([](int& value, int row, int col){value = col;});
+
+    m1.print(std::cout);
     m2.print(std::cout);
 
-    (m + -m2).print(std::cout);
+    (m1*m2).print(std::cout);
 
     return 0;   
 }
