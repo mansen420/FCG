@@ -15,9 +15,9 @@ namespace math
 
         public:
 
-        //returns pointer to row
+        //returns pointer to row (use this when mutation is desired)
         T* operator[](int idx) {return this->data[idx];}
-        //returns value of elemetn at [r][c]
+        //returns value of element at [r][c]
         T operator()(size_t r, size_t c)const{return data[r][c];}
 
         //returns mapped copy of object
@@ -29,7 +29,6 @@ namespace math
                     result[i][j] = mapping((*this)(i, j), i, j);
             return result;
         }
-
         //performs action on each element of matrix (allows mutation!)
         void for_each(std::function<void(T& value, int row, int col)>action)
         {
@@ -40,7 +39,23 @@ namespace math
 
         void print(std::ostream& stream)
         {
-            (*this).for_each([&](T value, int row, int col){stream << value << ' ';});
+            stream << "{";
+            (*this).for_each([&](T value, int row, int col)
+            {
+                if (col == 0)
+                    stream << "{";
+                stream << value;
+                if(col == n_cols - 1)
+                {
+                    if (row == n_rows - 1)
+                        stream << "}";
+                    else
+                        stream << "}, ";
+                }
+                else 
+                    stream << ' ';
+            });
+            stream << "}";
         }
 
         matrix operator+ (const matrix<T, n_rows, n_cols> rhs) const
