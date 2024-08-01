@@ -13,14 +13,14 @@ namespace math
     template <int lhs_cols, int rhs_rows>
     concept multipliable = lhs_cols == rhs_rows;
 
-    template <typename T, int n_rows, int n_cols>
+    template <int n_rows, int n_cols = n_rows, typename T = float>
     requires (n_rows > 0 && n_cols > 0)
     class matrix
     {
         T data[n_rows][n_cols];
         public:
 
-        const static inline matrix<T, n_rows, n_cols> I = matrix::map([](int row, int col)
+        const static inline matrix<n_rows, n_cols, T> I = matrix::map([](int row, int col)
         {
             static_assert(n_rows == n_cols);
             if (row == col)
@@ -37,7 +37,7 @@ namespace math
         //returns mapped copy of object
         matrix map(std::function<T(T value, int row, int col)>mapping)
         {
-            matrix<T, n_rows, n_cols> result;
+            matrix<n_rows, n_cols, T> result;
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
                     result[i][j] = mapping((*this)(i, j), i, j);
@@ -46,7 +46,7 @@ namespace math
         //maps an empty matrix to return value of mapping()
         static matrix map(std::function<T(int row, int col)>mapping)
         {
-            matrix<T, n_rows, n_cols> result;
+            matrix<n_rows, n_cols, T> result;
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
                     result[i][j] = mapping(i, j);
@@ -87,7 +87,7 @@ namespace math
             stream << "}";
         }
 
-        matrix operator+ (const matrix<T, n_rows, n_cols> rhs) const
+        matrix operator+ (const matrix<n_rows, n_cols, T> rhs) const
         {
             return this->map([&](T value, int row, int col){return value + rhs(row, col);});
         }
@@ -95,17 +95,17 @@ namespace math
         {
             return this->map([](T val, int row, int col){return -val;});
         }
-        matrix operator-(const matrix<T, n_rows, n_cols> rhs) const
+        matrix operator-(const matrix<n_rows, n_cols, T> rhs) const
         {
             return (*this) + -rhs;
         }
 
         template <int nr_rows, int nr_cols>
-        matrix operator*(const matrix<T, nr_rows, nr_cols> rhs) const requires math::multipliable<n_cols, nr_rows>
+        matrix operator*(const matrix<nr_rows, nr_cols, T> rhs) const requires math::multipliable<n_cols, nr_rows>
         {
             const matrix& lhs = (*this);
             const int mul_size = nr_rows; // == n_cols
-            matrix<T, n_rows, nr_cols> result;
+            matrix<n_rows, nr_cols, T> result;
             return result.map([&](T value, int row, int col)
             {
                 T sum{0};
@@ -126,16 +126,16 @@ namespace math
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     using namespace math;
-    matrix<int, 3, 2> m1;
+    matrix<3, 2, int> m1;
     m1.for_each([](int& value, int row, int col){value = row;});
-    matrix<int, 2, 2> m2;
+    matrix<2, 2, int> m2;
     m2.for_each([](int& value, int row, int col){value = col;});
 
- //   m1.print(std::cout);
- //   m2.print(std::cout);
+    m1.print(std::cout);
+    m2.print(std::cout);
 
-    matrix<int, 3, 3>::I.print(std::cout);
-    //(m1*m2).print(std::cout);
+    //matrix<3>::I.print(std::cout);
+    (m1*m2).print(std::cout);
 
     return 0;   
 }
