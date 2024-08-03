@@ -8,26 +8,23 @@ namespace math
     template <int lhs_cols, int rhs_rows>
     concept multipliable = lhs_cols == rhs_rows;
 
-    //functors
-    template <typename T>
-    using mapping_fnc = std::function<T(T value, int row, int col)>;
-    template <typename T>
-    using building_fnc = std::function<T(int row, int col)>;
-    template <typename T>
-    using mutation_fnc = std::function<void(T& value, int row, int col)>;
-    template <typename T>
-    using action_fnc = std::function<void(T value, int row, int col)>;
-
     template <int n_rows, int n_cols = n_rows, typename T = float>
     requires (n_rows > 0 && n_cols > 0)
     class matrix
-    {
+    {   
+        
         T data[n_rows][n_cols];
 public:
 
+        //functors
+        typedef std::function<T(T value, int row, int col)>      Fmapping;
+        typedef std::function<T(int row, int col)>              Fbuilding;
+        typedef std::function<void(T& value, int row, int col)> Fmutation;
+        typedef std::function<void(T value, int row, int col)>    Faction;
+
         matrix() = delete;
         //calls matrix::create()
-        matrix(building_fnc builder)
+        matrix(Fbuilding builder)
         {
             *this = matrix::create(builder);
         }
@@ -57,7 +54,7 @@ public:
 
 
         //returns mapped copy of object
-        matrix map(mapping_fnc mapping) const
+        matrix map(Fmapping mapping) const
         {
             matrix<n_rows, n_cols, T> result = matrix::zero;
             for(size_t i = 0; i < n_rows; ++i)
@@ -66,7 +63,7 @@ public:
             return result;
         }
         //creates new matrix. Equivalent to mapping from the zero matrix
-        static matrix create(building_fnc building)
+        static matrix create(Fbuilding building)
         {
             matrix<n_rows, n_cols, T> result = matrix::zero;
             for(size_t i = 0; i < n_rows; ++i)
@@ -75,14 +72,14 @@ public:
             return result;
         }
         //Allows mutation of each each matrix element. Use sparingly.
-        void mutate(mutation_fnc mutation)
+        void mutate(Fmutation mutation)
         {
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
                     mutation((*this)[i][j], i, j);
         }
         //Performs action on each element of matrix by value.
-        void for_each(action_fnc action) const
+        void for_each(Faction action) const
         {
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
@@ -188,7 +185,7 @@ public:
         std::array<T, dim> data;
 public:
 
-        vector(const std::array& data) : data{data} {}
+        vector(const std::array<T, dim>& data) : data{data} {}
 
     };
 };
