@@ -12,8 +12,7 @@ namespace math
     requires (n_rows > 0 && n_cols > 0)
     class matrix
     {   
-        
-        T data[n_rows][n_cols];
+        std::array<std::array<T, n_cols>, n_rows> data;
 public:
 
         //functors
@@ -47,8 +46,8 @@ public:
                 return T{0};
         });
 
-        //returns pointer to row (use this when mutation is desired)
-        T* operator[](int idx) {return this->data[idx];}
+        //returns row
+        std::array<T, n_cols> operator[](int idx) {return this->data[idx];}
         //returns value of element at [r][c]
         T operator()(size_t r, size_t c)const{return data[r][c];}
 
@@ -59,7 +58,7 @@ public:
             matrix<n_rows, n_cols, T> result = matrix::zero;
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
-                    result[i][j] = mapping((*this)(i, j), i, j);
+                    result.data[i][j] = mapping((*this)(i, j), i, j);
             return result;
         }
         //creates new matrix. Equivalent to mapping from the zero matrix
@@ -68,7 +67,7 @@ public:
             matrix<n_rows, n_cols, T> result = matrix::zero;
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
-                    result[i][j] = building(i, j);
+                    result.data[i][j] = building(i, j);
             return result;
         }
         //Allows mutation of each each matrix element. Use sparingly.
@@ -76,7 +75,7 @@ public:
         {
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
-                    mutation((*this)[i][j], i, j);
+                    mutation(this->data[i][j], i, j);
         }
         //Performs action on each element of matrix by value.
         void for_each(Faction action) const
@@ -195,5 +194,19 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     using namespace math;
 
+    matrix<3> m1([](int row, int col)
+    {
+        return row + col + 1;
+    });
+
+    m1.print(std::cout);
+    auto m2 = m1.map([](float val, int row, int col)
+    {
+        return val + 1;
+    });
+    m2.print(std::cout);
+    std::cout << '\n';
+    (m1*m2).print(std::cout);
+    
     return 0;   
 }
