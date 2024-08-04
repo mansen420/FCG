@@ -1,9 +1,91 @@
 #include <cstddef>
-#include <iostream>
+#include <cassert>
+#include <exception>
 #include <functional>
+#include <iostream>
 
 namespace math
 {
+
+    //Pure vector class.
+    //Should not be mixed directly with matrix class. Convert to column or row vector first.
+    template <int dim, typename T = float>
+    class vector
+    {
+        std::array<T, dim> data;
+public:
+
+        vector(const std::array<T, dim>& data) : data{data} {}
+        vector(const std::initializer_list<T>& list) 
+        {
+            for(size_t i = 0; i < dim; ++i)
+                data[i] = list.begin()[i];
+        }
+        vector(const std::function<T(int idx)>& builder)
+        {
+            *this = create(builder);
+        }
+
+        vector() = delete;
+
+        T operator[](int idx)const{return data[idx];}
+        operator std::array<T, dim>()const{return data;}
+
+
+        static inline vector zero = {0};
+
+        static vector create(std::function<T(size_t idx, T srcValue)> builder, const vector& source = vector::zero)
+        {
+            vector result = source;
+            for(size_t i = 0; i < dim; ++i)
+                result.data[i] = builder(i, source[i]);
+            return result;
+        }
+
+        T reduce(const std::function<void(T value, size_t idx, T& previous)>& reduction, T initial = T{0})const
+        {
+            T previous = initial;
+            for(size_t i = 0; i < dim; ++i)
+                reduction((*this)[i], i, previous);
+            return previous;
+        }
+        void for_each(const std::function<void(T value, size_t idx)>& action)const
+        {
+            for(size_t i = 0; i < dim; ++i)
+                action((*this)[i], i);
+        }
+        void mutate(const std::function<void(T& value, size_t idx)>& mutation)
+        {
+            for(size_t i = 0; i < dim; ++i)
+                mutation(this->data[i], i);
+        }
+        vector map(const std::function<T(T value, size_t idx)>& mapping)const
+        {
+            return create(mapping, *this);
+        }
+
+        void print(std::ostream& stream) const
+        {
+            stream << "{";
+            for_each([&](T value, size_t idx)
+            {
+                stream << value;
+                if(idx != dim - 1)
+                    stream << ' ';
+            });
+            stream << "}";
+        }
+
+        T operator*(const vector& rhs) const
+        {
+            return reduce([&](T value, size_t idx, T& prev)
+            {
+                prev += value*rhs[idx];
+            });
+        }
+        //...
+    };
+
     //nr_rows belongs to lhs, nr_cols belongs to rhs!
     template <int lhs_cols, int rhs_rows>
     concept multipliable = lhs_cols == rhs_rows;
@@ -22,21 +104,17 @@ public:
         typedef std::function<void(T value, int row, int col)>    Faction;
 
         matrix() = delete;
-        //calls matrix::create()
-        matrix(Fbuilding builder)
+
+        matrix(Fbuilding builder){*this = matrix::create(builder);}
+        matrix(const std::array<std::array<T, n_cols>, n_rows>& list) : data{list}{}
+        //Avoid this constructor when possible. Error prone.
+        matrix(const std::initializer_list<std::array<T, n_cols>>& list)
         {
-            *this = matrix::create(builder);
+            for(size_t i = 0; i < n_rows; ++i)
+                data[i] = list.begin()[i];
         }
 
-        matrix(const std::array<std::array<T, n_cols>, n_rows> list)
-        {
-            *this = matrix::create([&](int row, int col)
-            {
-                return list[row][col];
-            });
-        }
-
-        const static inline matrix<n_rows, n_cols, T> zero = matrix::create([](int row, int col){return T{0};});
+        const static inline matrix<n_rows, n_cols, T> zero = create([](int row, int col){return T{0};});
         const static inline matrix<n_rows, n_cols, T> I = matrix::create([](int row, int col)
         {
             static_assert(n_rows == n_cols);
@@ -46,13 +124,12 @@ public:
                 return T{0};
         });
 
-        //returns row
-        std::array<T, n_cols> operator[](int idx) {return this->data[idx];}
+        //returns value of row
+        vector<n_cols, T> operator[](size_t idx) {return this->data[idx];}
         //returns value of element at [r][c]
         T operator()(size_t r, size_t c)const{return data[r][c];}
 
 
-        //returns mapped copy of object
         matrix map(Fmapping mapping) const
         {
             matrix<n_rows, n_cols, T> result = matrix::zero;
@@ -61,23 +138,21 @@ public:
                     result.data[i][j] = mapping((*this)(i, j), i, j);
             return result;
         }
-        //creates new matrix. Equivalent to mapping from the zero matrix
-        static matrix create(Fbuilding building)
+        static matrix create(Fbuilding build)
         {
-            matrix<n_rows, n_cols, T> result = matrix::zero;
+            std::array<std::array<T, n_cols>, n_rows> data;
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
-                    result.data[i][j] = building(i, j);
+                    data[i][j] = build(i, j);
+            matrix result(data);
             return result;
         }
-        //Allows mutation of each each matrix element. Use sparingly.
         void mutate(Fmutation mutation)
         {
             for(size_t i = 0; i < n_rows; ++i)
                 for(size_t j = 0; j < n_cols; ++j)
                     mutation(this->data[i][j], i, j);
         }
-        //Performs action on each element of matrix by value.
         void for_each(Faction action) const
         {
             for(size_t i = 0; i < n_rows; ++i)
@@ -88,7 +163,7 @@ public:
 
         void print(std::ostream& stream) const
         {
-            stream << "{";
+            stream << "[";
             (*this).for_each([&](T value, int row, int col)
             {
                 if (col == 0)
@@ -102,7 +177,7 @@ public:
                 else 
                     stream << ' ';
             });
-            stream << "}";
+            stream << "]";
         }
 
         matrix operator+ (const matrix<n_rows, n_cols, T> rhs) const
@@ -152,8 +227,8 @@ public:
         }
     };
     
-    template <int dim, typename T>
-    inline matrix<dim, dim, T> get_scale(const std::array<T, dim> diagonals)
+    template <int dim, typename T = float>
+    inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals)
     {
         return matrix<dim, dim, T>([&](int row, int col)
         {
@@ -176,17 +251,6 @@ public:
     template <int dim, typename T = float>
     using row_vector = matrix<1, dim, T>;
 
-    //Pure vector class.
-    //Should not be mixed directly with matrix class. Convert to column or row vector first.
-    template <int dim, typename T = float>
-    class vector
-    {
-        std::array<T, dim> data;
-public:
-
-        vector(const std::array<T, dim>& data) : data{data} {}
-
-    };
 };
 
 
@@ -194,19 +258,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     using namespace math;
 
-    matrix<3> m1([](int row, int col)
-    {
-        return row + col + 1;
-    });
+    matrix<2> m1({{1}, {2}});
+    matrix<2> m2({{2, 0}, {0, 2}});
 
-    m1.print(std::cout);
-    auto m2 = m1.map([](float val, int row, int col)
-    {
-        return val + 1;
-    });
-    m2.print(std::cout);
-    std::cout << '\n';
-    (m1*m2).print(std::cout);
-    
+    vector<3> v1({3, 2, 1});
+    v1.print(std::cout);
+    vector<3> v2({1, 1, 1});
+    v2.print(std::cout);
+    std::cout << v1*v2;
     return 0;   
 }
