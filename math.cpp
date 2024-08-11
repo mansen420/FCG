@@ -41,6 +41,8 @@ public:
                 delete[] data;
         }
 
+        vector(){}
+
         vector(const std::initializer_list<T>& list) 
         {
             for(size_t i = 0; i < dim; ++i)
@@ -50,7 +52,7 @@ public:
         {
             *this = create(builder);
         }
-        vector(T fillValue = T(0))
+        vector(T fillValue)
         {
             for(size_t i = 0; i < dim; ++i)
                 data[i] = fillValue;
@@ -463,8 +465,8 @@ namespace output
     template<uint width, uint height>
     struct framebuffer
     {
-        colorbuffer<width, height> colorPlane;
-        alphabuffer<width, height> alphaPlane;
+        colorbuffer<width, height> colorPlane = colorbuffer<width, height>(RGB24({100, 100, 100}));
+        alphabuffer<width, height> alphaPlane = alphabuffer<width, height>(1.0);
     };
     class window
     {
@@ -485,7 +487,7 @@ public:
             for(size_t i = 0; i < width; ++i)
                 for(size_t j = 0; j < height; ++j)
                 {
-                    const RGB24& RGB = frame.colorPlane[i][j];
+                    const RGB24& RGB = frame.colorPlane(i, j);
                     pixelPtr[i + srf->w*j] = SDL_MapRGB(srf->format, RGB.r, RGB.g, RGB.b);
                 }
             SDL_UnlockSurface(srf);
@@ -505,15 +507,19 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     //these segfault exactly when w,h>221. wtf? stack overflow...
     constexpr uint w = 700;
     constexpr uint h = 500;
-   //output::window window("title", 200, 200, w, h);
+    output::window window("title", 200, 200, w, h);
 
     using namespace math;
     using namespace output;
     //stack overflow!
 
-    //window.write_frame(frame);
+    framebuffer<w, h> frame;
 
-    //window.update_surface();
+    window.write_frame(frame);
+
+    window.update_surface();
+
+    SDL_Delay(5000);
 
    return 0;   
 }
