@@ -24,15 +24,22 @@ namespace math
     requires (dim > 0)
     class vector
     {
+        T*const data = new T[dim];
+
         template <int n_rows, int n_cols, typename D>
+        requires (n_rows > 0 && n_cols > 0)
         friend class matrix;
-        T* data = new T[dim];
-        vector(T* data){this->data = data;}
+        vector(T* data) : data{data}, ownsData{false} {}
         T& operator[](int idx){return data[idx];}
+        bool ownsData = true;
 public:
         T operator()(size_t idx)const{return data[idx];}
 
-        ~vector(){delete[] data;}
+        ~vector()
+        {
+            if(ownsData)
+                delete[] data;
+        }
 
         vector(const std::initializer_list<T>& list) 
         {
@@ -82,7 +89,7 @@ public:
         {
             T* data = new T[dim];
             for(size_t i = 0; i < dim; ++i)
-                data[i] = builder(i, source[i]);
+                data[i] = builder(i, source(i));
             vector result(data);
             return result;
         }
@@ -109,6 +116,8 @@ public:
         {
             return create(mapping, *this);
         }
+
+        vector copy()const{return map([](size_t idx, T val){return val;});}
 
         void print(std::ostream& stream) const
         {
@@ -149,7 +158,7 @@ public:
             const vector& lhs = *this;
             return lhs + (-rhs);
         }
-        vector operator* (T coeff)const
+        vector operator* (float coeff)const
         {
             return map([&](size_t idx, T val)
             {
@@ -183,6 +192,11 @@ public:
     template <int dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
 
+    template <int dim, typename T>
+    vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
+    {
+        return u*coeff;
+    }
 
     template <int dim, typename T> 
     inline vector<dim, T> operator*(T coeff, vector<dim, T> u)
@@ -203,7 +217,6 @@ public:
     class matrix
     {
         vector<n_rows*n_cols, T> data;
-        //std::array<std::array<T, n_cols>, n_rows> data;
         T& operator[](size_t idx) {return this->data[idx];}
         matrix(){}
         static matrix get_identity()
@@ -291,17 +304,24 @@ public:
         const static inline matrix<n_rows, n_cols, T> zero = matrix(T(0));
         const static inline matrix<n_rows, n_cols, T> I = matrix::get_identity();
 
-
-        vector<n_cols, T> row(size_t idx)
+        //keep in mind that modifying this vector will mutate the matrix!
+        inline vector<n_cols, T> row(size_t idx)
         {
             assert(idx < n_rows);
-            vector<n_cols, T> result;
             const size_t startIdx = idx*n_cols;
-            for(size_t i = 0; i < n_cols; ++i)
-                result.data[i] = this->data(startIdx + i);
+            vector<n_cols, T> result(&this->data[startIdx]);
             return result;
         }
-        vector<n_rows, T> col(size_t idx)
+        inline vector<n_cols, T> row_copy(size_t idx) const
+        {
+            assert(idx < n_rows);
+            const size_t startIdx = idx*n_cols;
+            vector<n_cols, T> result;
+            for(size_t i = 0; i < n_cols; ++i)
+                result[i] = this->data(startIdx + i);
+            return result;
+        }
+        inline vector<n_rows, T> col(size_t idx)const
         {
             assert(idx < n_cols);
             vector<n_rows, T> result;
@@ -310,29 +330,28 @@ public:
             return result;
         }
 
-/*
-        void mutate_rows(const std::function<void(std::array<T, n_cols>& row, size_t idx)>& mutation)
+        
+        void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
         {
             for(size_t i = 0; i < n_cols; ++i)
-                mutation(data[i], i);
+                mutation(row(i), i);
         }
-        void for_each_row(const std::function<void(const std::array<T, n_cols>& row, size_t idx)>& action)
+        void for_each_row(const std::function<void(const vector<n_cols, T>& row, size_t idx)>& action)const
         {
-            for(size_t i = 0; i < n_cols; ++i)
-                action(data[i], i);
+            for(size_t i = 0; i < n_rows; ++i)
+                action(row_copy(i), i);
         }
-        void set_row(size_t idx, const std::array<T, n_cols>& row)
+        void set_row(size_t idx, const vector<n_cols, T>& row)
         {
-            this->data[idx] = row;
+            this->row(idx) = row;
         }
-        matrix map_rows(const std::function<std::array<T, n_cols>(std::array<T, n_cols> row, size_t idx)>& mapping)
+        matrix map_rows(const std::function<vector<n_cols, T>(const vector<n_cols, T>& row, size_t idx)>& mapping) const
         {
             matrix result = matrix::zero;
-            for(size_t i = 0; i < n_cols; ++i)
-                result.set_row(i, mapping(this->row(i), i));
+            for(size_t i = 0; i < n_rows; ++i)
+                result.set_row(i, mapping(this->row_copy(i), i));
             return result;
         }
-*/
 
         void print(std::ostream& stream) const
         {
@@ -424,7 +443,6 @@ public:
         });
     }
 
-
     template <int dim, typename T = float>
     using col_vector = matrix<dim, 1, T>;
     
@@ -496,9 +514,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     //window.write_frame(frame);
 
     //window.update_surface();
-
-    matrix<2, 3> m1 ({1, 2, 3, 4, 5, 6});
-    std::cout << m1.col(2);   
 
    return 0;   
 }
