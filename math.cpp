@@ -15,6 +15,165 @@
 
 namespace math
 {
+    
+    template <typename T>
+    class basic_aggregate
+    {
+protected:
+        bool ownsData = true;
+        T* data;
+public:
+        basic_aggregate() = default;
+        explicit basic_aggregate(T* const data) : ownsData{false}, data{data}{}
+        virtual ~basic_aggregate()
+        {
+            if(ownsData)
+                delete[] data;
+        }
+    };
+
+    template <size_t dim, typename T>
+    requires (dim > 0)
+    class static_aggregate : public basic_aggregate<T>
+    {
+        typedef std::function<T(size_t idx)> builder;
+        typedef std::function<T(T value, size_t idx)> mapping;
+        typedef std::function<void(T& value, size_t idx)> mutation;
+        typedef std::function<void(T val, size_t idx)> process;
+        template <typename D>
+        using reduction = std::function<D(T val, size_t idx, D prev)>;
+public:
+        T operator[](size_t idx){return this->data[idx];}
+        static_aggregate& operator=(const static_aggregate& rhs)
+        {
+            if(this == &rhs)
+                return *this;
+            for(size_t i = 0; i < dim; ++i)
+                this->data[i] = rhs.data[i];
+            return *this;
+        }
+        static_aggregate(const static_aggregate& copy) : static_aggregate() {*this = copy;}
+
+        static_aggregate() {this->data = new T[dim];}
+        explicit static_aggregate(T* const data) : basic_aggregate<T>(data){}
+        explicit static_aggregate(std::initializer_list<T> list) : static_aggregate()
+        {
+            std::copy(list.begin(), list.end(), this->data);
+        }
+        explicit static_aggregate(const T fillValue) : static_aggregate()
+        {
+            for(size_t i = 0; i < dim; ++i)
+                this->data[i] = fillValue;
+        }
+
+        static void create(builder fnc, static_aggregate& out)
+        {
+            for(size_t i = 0; i < dim; ++i)
+                out.data[i] = fnc(i);
+        }
+        static_aggregate map(mapping fnc) const
+        {
+            static_aggregate result;
+            create([&fnc, this](size_t idx) -> T
+            {
+                return fnc(this->data[idx], idx);
+            }, result);
+            return result;
+        }
+        static_aggregate mutate(mutation fnc)
+        {
+            for(size_t i = 0; i < dim; ++i)
+                fnc(this->data[i], i);
+            return *this;
+        }
+        static_aggregate for_each(process fnc)const
+        {
+            for(size_t i = 0; i < dim; ++i)
+                fnc(this->data[i], i);
+            return *this;
+        }
+        template <typename D>
+        D reduce(reduction<D> fnc, D initial = D(0)) const
+        {
+            D result = initial;
+            for(size_t i = 0; i < dim; ++i)
+                result = fnc(this->data[i], i, result);
+            return result;
+        }
+    };
+
+    template <typename T>
+    class dynamic_aggregate : public basic_aggregate<T>
+    {
+        typedef std::function<T(size_t idx)> builder;
+        typedef std::function<T(T value, size_t idx)> mapping;
+        typedef std::function<void(T& value, size_t idx)> mutation;
+        typedef std::function<void(T val, size_t idx)> process;
+        template <typename D>
+        using reduction = std::function<D(T val, size_t idx, D prev)>;
+public:
+        const size_t dim;
+
+        T operator[](size_t idx){return this->data[idx];}
+        dynamic_aggregate& operator=(const dynamic_aggregate& rhs)
+        {
+            if(this == &rhs)
+                return *this;
+            assert (dim == rhs.dim);
+            for(size_t i = 0; i < dim; ++i)
+                this->data[i] = rhs.data[i];
+            return *this;
+        }
+        dynamic_aggregate(const dynamic_aggregate& copy) : dynamic_aggregate(copy.dim) {*this = copy;}
+
+        dynamic_aggregate(size_t dim) : dim{dim} {assert(dim > 0); this->data = new T[dim];}
+        explicit dynamic_aggregate(size_t dim, T* const data) : dim{dim}, basic_aggregate<T>(data){}
+        explicit dynamic_aggregate(size_t dim, std::initializer_list<T> list) : dynamic_aggregate(dim)
+        {
+            std::copy(list.begin(), list.end(), this->data);
+        }
+        explicit dynamic_aggregate(const T fillValue) : dynamic_aggregate(dim)
+        {
+            for(size_t i = 0; i < dim; ++i)
+                this->data[i] = fillValue;
+        }
+    
+        static void create(builder fnc, dynamic_aggregate& out)
+        {
+            for(size_t i = 0; i < out.dim; ++i)
+                out.data[i] = fnc(i);
+        }
+        dynamic_aggregate map(mapping fnc) const
+        {
+            dynamic_aggregate result(this->dim);
+            create([&fnc, this](size_t idx) -> T
+            {
+                return fnc(this->data[idx], idx);
+            }, result);
+            return result;
+        }
+        dynamic_aggregate mutate(mutation fnc)
+        {
+            for(size_t i = 0; i < dim; ++i)
+                fnc(this->data[i], i);
+            return *this;
+        }
+        dynamic_aggregate for_each(process fnc)const
+        {
+            for(size_t i = 0; i < dim; ++i)
+                fnc(this->data[i], i);
+            return *this;
+        }
+        template <typename D>
+        D reduce(reduction<D> fnc, D initial = D(0)) const
+        {
+            D result = initial;
+            for(size_t i = 0; i < dim; ++i)
+                result = fnc(this->data[i], i, result);
+            return result;
+        }    
+    };
+
     template <int n_rows, int n_cols, typename T>
     requires (n_rows > 0 && n_cols > 0)
     class matrix;
@@ -335,8 +494,11 @@ public:
         
         void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
         {
-            for(size_t i = 0; i < n_cols; ++i)
-                mutation(row(i), i);
+            for(size_t i = 0; i < n_rows; ++i)
+            {
+                vector<n_cols, T> row(this->row(i).data);
+                mutation(row, i);
+            }
         }
         void for_each_row(const std::function<void(const vector<n_cols, T>& row, size_t idx)>& action)const
         {
@@ -456,17 +618,17 @@ namespace output
 {
     typedef math::vector<3, u_int8_t> RGB24;
 
-    template<uint width, uint height>
-    using colorbuffer = math::matrix<width, height, RGB24>;
+    template<uint nRows, uint nCols>
+    using colorbuffer = math::matrix<nRows, nCols, RGB24>;
 
-    template<uint width, uint height>
-    using alphabuffer = math::matrix<width, height, uint8_t>;
+    template<uint nRows, uint nCols>
+    using alphabuffer = math::matrix<nRows, nCols, uint8_t>;
 
-    template<uint width, uint height>
+    template<uint nLines, uint lineSpan>
     struct framebuffer
     {
-        colorbuffer<width, height> colorPlane = colorbuffer<width, height>(RGB24({100, 100, 100}));
-        alphabuffer<width, height> alphaPlane = alphabuffer<width, height>(1.0);
+        colorbuffer<nLines, lineSpan> colorPlane = colorbuffer<nLines, lineSpan>(RGB24({100, 100, 100}));
+        alphabuffer<nLines, lineSpan> alphaPlane = alphabuffer<nLines, lineSpan>(1.0);
     };
     class window
     {
@@ -478,17 +640,18 @@ public:
             if(!handle)
                 throw std::runtime_error("WINDOW ERROR");
         }
-        template<uint width, uint height>
-        void write_frame(const framebuffer<width, height>& frame)
+
+        template<uint nLines, uint lineSpan>
+        void write_frame(const framebuffer<nLines, lineSpan>& frame)
         {
             SDL_Surface* srf = SDL_GetWindowSurface(handle);
             SDL_LockSurface(srf);
             uint32_t* pixelPtr = (uint32_t*)srf->pixels;
-            for(size_t i = 0; i < width; ++i)
-                for(size_t j = 0; j < height; ++j)
+            for(size_t i = 0; i < nLines; ++i)
+                for(size_t j = 0; j < lineSpan; ++j)
                 {
                     const RGB24& RGB = frame.colorPlane(i, j);
-                    pixelPtr[i + srf->w*j] = SDL_MapRGB(srf->format, RGB.r, RGB.g, RGB.b);
+                    pixelPtr[i*srf->w + j] = SDL_MapRGB(srf->format, RGB.r, RGB.g, RGB.b);
                 }
             SDL_UnlockSurface(srf);
         }
@@ -504,22 +667,26 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return -1;
 
-    //these segfault exactly when w,h>221. wtf? stack overflow...
-    constexpr uint w = 700;
-    constexpr uint h = 500;
-    output::window window("title", 200, 200, w, h);
+    constexpr uint a = 700;
+    constexpr uint b = 500;
+//    output::window window("title", 200, 200, a, b);
 
     using namespace math;
     using namespace output;
-    //stack overflow!
 
-    framebuffer<w, h> frame;
+    auto print = [](float v, size_t idx){std::cout << v;};
 
-    window.write_frame(frame);
+    dynamic_aggregate<float> s1(size_t(3));
+    dynamic_aggregate<float>::create([](size_t idx)
+    {
+        return idx + 1;
+    }, s1);
 
-    window.update_surface();
+    s1.mutate([](float& val, size_t idx)
+    {
+        val = idx + 10;
+    });
 
-    SDL_Delay(5000);
-
+    s1.for_each(print);
    return 0;   
 }
