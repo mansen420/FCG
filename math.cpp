@@ -4,6 +4,7 @@
 #include <exception>
 #include <functional>
 #include <iostream>
+#include <variant>
 //IO
 #include <fstream>
 #include <streambuf>
@@ -15,7 +16,6 @@
 
 namespace math
 {
-    
     template <typename T>
     class basic_aggregate
     {
@@ -23,6 +23,7 @@ protected:
         bool ownsData = true;
         T* data;
 public:
+        operator T*(){return data;} //is this a good idea?
         basic_aggregate() = default;
         explicit basic_aggregate(T* const data) : ownsData{false}, data{data}{}
         virtual ~basic_aggregate()
@@ -32,135 +33,94 @@ public:
         }
     };
 
-    template <size_t dim, typename T>
-    requires (dim > 0)
-    class static_aggregate : public basic_aggregate<T>
-    {
-        typedef std::function<T(size_t idx)> builder;
-        typedef std::function<T(T value, size_t idx)> mapping;
-        typedef std::function<void(T& value, size_t idx)> mutation;
-        typedef std::function<void(T val, size_t idx)> process;
-        template <typename D>
-        using reduction = std::function<D(T val, size_t idx, D prev)>;
-public:
-        T operator[](size_t idx){return this->data[idx];}
-        static_aggregate& operator=(const static_aggregate& rhs)
-        {
-            if(this == &rhs)
-                return *this;
-            for(size_t i = 0; i < dim; ++i)
-                this->data[i] = rhs.data[i];
-            return *this;
-        }
-        static_aggregate(const static_aggregate& copy) : static_aggregate() {*this = copy;}
 
-        static_aggregate() {this->data = new T[dim];}
-        explicit static_aggregate(T* const data) : basic_aggregate<T>(data){}
-        explicit static_aggregate(std::initializer_list<T> list) : static_aggregate()
-        {
-            std::copy(list.begin(), list.end(), this->data);
-        }
-        explicit static_aggregate(const T fillValue) : static_aggregate()
-        {
-            for(size_t i = 0; i < dim; ++i)
-                this->data[i] = fillValue;
-        }
-
-        static void create(builder fnc, static_aggregate& out)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                out.data[i] = fnc(i);
-        }
-        static_aggregate map(mapping fnc) const
-        {
-            static_aggregate result;
-            create([&fnc, this](size_t idx) -> T
-            {
-                return fnc(this->data[idx], idx);
-            }, result);
-            return result;
-        }
-        static_aggregate mutate(mutation fnc)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                fnc(this->data[i], i);
-            return *this;
-        }
-        static_aggregate for_each(process fnc)const
-        {
-            for(size_t i = 0; i < dim; ++i)
-                fnc(this->data[i], i);
-            return *this;
-        }
-        template <typename D>
-        D reduce(reduction<D> fnc, D initial = D(0)) const
-        {
-            D result = initial;
-            for(size_t i = 0; i < dim; ++i)
-                result = fnc(this->data[i], i, result);
-            return result;
-        }
-    };
-
-    template <typename T>
-    class dynamic_aggregate : public basic_aggregate<T>
-    {
-        typedef std::function<T(size_t idx)> builder;
-        typedef std::function<T(T value, size_t idx)> mapping;
-        typedef std::function<void(T& value, size_t idx)> mutation;
-        typedef std::function<void(T val, size_t idx)> process;
-        template <typename D>
-        using reduction = std::function<D(T val, size_t idx, D prev)>;
-public:
-        const size_t dim;
-
-        T operator[](size_t idx){return this->data[idx];}
-        dynamic_aggregate& operator=(const dynamic_aggregate& rhs)
-        {
-            if(this == &rhs)
-                return *this;
-            assert (dim == rhs.dim);
-            for(size_t i = 0; i < dim; ++i)
-                this->data[i] = rhs.data[i];
-            return *this;
-        }
-        dynamic_aggregate(const dynamic_aggregate& copy) : dynamic_aggregate(copy.dim) {*this = copy;}
-
-        dynamic_aggregate(size_t dim) : dim{dim} {assert(dim > 0); this->data = new T[dim];}
-        explicit dynamic_aggregate(size_t dim, T* const data) : dim{dim}, basic_aggregate<T>(data){}
-        explicit dynamic_aggregate(size_t dim, std::initializer_list<T> list) : dynamic_aggregate(dim)
-        {
-            std::copy(list.begin(), list.end(), this->data);
-        }
-        explicit dynamic_aggregate(const T fillValue) : dynamic_aggregate(dim)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                this->data[i] = fillValue;
-        }
+    constexpr uint DYNAMIC = 0;
     
-        static void create(builder fnc, dynamic_aggregate& out)
+    template <typename T, size_t dim>
+    requires (dim >= 0)
+    class list : public basic_aggregate<T>
+    {
+        typedef std::function<T(size_t idx)> builder;
+        typedef std::function<T(T value, size_t idx)> mapping;
+        typedef std::function<void(T& value, size_t idx)> mutation;
+        typedef std::function<void(T val, size_t idx)> process;
+        template <typename D>
+        using reduction = std::function<D(T val, size_t idx, D prev)>;
+
+        [[no_unique_address]] std::conditional_t<dim == 0, size_t, decltype(0)> dynamicSize;
+public:
+        inline size_t size() const
         {
-            for(size_t i = 0; i < out.dim; ++i)
+            if(dim == DYNAMIC)
+                return dynamicSize;
+            return dim;
+        }
+
+        T operator[](size_t idx)const{return this->data[idx];}
+        list& operator=(const list& rhs)
+        {
+            if(this == &rhs)
+                return *this;
+            for(size_t i = 0; i < dim; ++i)
+                this->data[i] = rhs.data[i];
+            return *this;
+        }
+        list(const list& copy) : list() {*this = copy;}
+
+        list(size_t dynamicSize = 0)
+        {
+            if(dim == DYNAMIC)
+            {
+                this->dynamicSize = dynamicSize;
+                this->data = new T[dynamicSize];
+                return;
+            }
+            this->data = new T[dim];
+        }
+        explicit list(T* const data, size_t dynamicSize = 0) : basic_aggregate<T>(data)
+        {
+            if(dim == DYNAMIC)
+            {
+                this->dynamicSize = dynamicSize;
+                this->data = new T[dynamicSize];
+                return;
+            }
+            this->data = new T[dim];
+        }
+        explicit list(std::initializer_list<T> list, size_t dynamicSize = 0) : list::list(dynamicSize)
+        {
+            std::copy(list.begin(), list.end(), this->data);
+        }
+        explicit list(const T fillValue, size_t dynamicSize = 0) : list(dynamicSize)
+        {
+            for(size_t i = 0; i < size(); ++i)
+                this->data[i] = fillValue;
+        }
+
+
+        static void create(builder fnc, list& out)
+        {
+            for(size_t i = 0; i < out.size(); ++i)
                 out.data[i] = fnc(i);
         }
-        dynamic_aggregate map(mapping fnc) const
+        list map(mapping fnc) const
         {
-            dynamic_aggregate result(this->dim);
+            list result;
             create([&fnc, this](size_t idx) -> T
             {
                 return fnc(this->data[idx], idx);
             }, result);
             return result;
         }
-        dynamic_aggregate mutate(mutation fnc)
+        list mutate(mutation fnc)
         {
-            for(size_t i = 0; i < dim; ++i)
+            for(size_t i = 0; i < size(); ++i)
                 fnc(this->data[i], i);
             return *this;
         }
-        dynamic_aggregate for_each(process fnc)const
+        list for_each(process fnc)const
         {
-            for(size_t i = 0; i < dim; ++i)
+            for(size_t i = 0; i < size(); ++i)
                 fnc(this->data[i], i);
             return *this;
         }
@@ -168,10 +128,10 @@ public:
         D reduce(reduction<D> fnc, D initial = D(0)) const
         {
             D result = initial;
-            for(size_t i = 0; i < dim; ++i)
+            for(size_t i = 0; i < size(); ++i)
                 result = fnc(this->data[i], i, result);
             return result;
-        }    
+        }
     };
 
     template <int n_rows, int n_cols, typename T>
@@ -179,8 +139,9 @@ public:
     class matrix;
 
     //Pure vector class.
-    template <int dim, typename T = float>
-    requires (dim > 0)
+    //if dim == 0 then use a dynamic aggregate
+    template <size_t dim, typename T = float>
+    requires (dim >= 0)
     class vector
     {
         T*const data = new T[dim];
@@ -188,8 +149,11 @@ public:
         template <int n_rows, int n_cols, typename D>
         requires (n_rows > 0 && n_cols > 0)
         friend class matrix;
+
         vector(T* data) : data{data}, ownsData{false} {}
+
         T& operator[](int idx){return data[idx];}
+
         bool ownsData = true;
 public:
         T operator()(size_t idx)const{return data[idx];}
@@ -238,11 +202,12 @@ public:
         const T& x = data[0];
         const T& y = data[1];
         const T& z = data[2];
+        const T& w = data[3];
 
         const T& r = x;
         const T& g = y;
         const T& b = z;
-
+        const T& a = w;
 
         static inline vector zero = vector(T(0));
 
@@ -676,17 +641,14 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     auto print = [](float v, size_t idx){std::cout << v;};
 
-    dynamic_aggregate<float> s1(size_t(3));
-    dynamic_aggregate<float>::create([](size_t idx)
-    {
-        return idx + 1;
-    }, s1);
+    list<float, 3> s1({1, 2, 3});
 
     s1.mutate([](float& val, size_t idx)
     {
-        val = idx + 10;
+        val = val*2;
     });
 
     s1.for_each(print);
-   return 0;   
+
+    return 0;
 }
