@@ -33,10 +33,9 @@ public:
         }
     };
 
-
     constexpr uint DYNAMIC = 0;
     
-    template <typename T, size_t dim>
+    template <typename T, size_t dim = DYNAMIC>
     requires (dim >= 0)
     class list : public basic_aggregate<T>
     {
@@ -67,7 +66,7 @@ public:
         }
         list(const list& copy) : list() {*this = copy;}
 
-        list(size_t dynamicSize = 0)
+        list(const size_t dynamicSize = 0)
         {
             if(dim == DYNAMIC)
             {
@@ -77,7 +76,7 @@ public:
             }
             this->data = new T[dim];
         }
-        explicit list(T* const data, size_t dynamicSize = 0) : basic_aggregate<T>(data)
+        explicit list(T* const data, const size_t dynamicSize = 0) : basic_aggregate<T>(data)
         {
             if(dim == DYNAMIC)
             {
@@ -87,11 +86,11 @@ public:
             }
             this->data = new T[dim];
         }
-        explicit list(std::initializer_list<T> list, size_t dynamicSize = 0) : list::list(dynamicSize)
+        explicit list(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list::list(dynamicSize)
         {
             std::copy(list.begin(), list.end(), this->data);
         }
-        explicit list(const T fillValue, size_t dynamicSize = 0) : list(dynamicSize)
+        explicit list(const T fillValue, const size_t dynamicSize = 0) : list(dynamicSize)
         {
             for(size_t i = 0; i < size(); ++i)
                 this->data[i] = fillValue;
@@ -132,77 +131,44 @@ public:
                 result = fnc(this->data[i], i, result);
             return result;
         }
+
+        virtual ~list() = default;
     };
 
     template <int n_rows, int n_cols, typename T>
-    requires (n_rows > 0 && n_cols > 0)
+    requires (n_rows >= 0 && n_cols >= 0)
     class matrix;
 
-    //Pure vector class.
-    //if dim == 0 then use a dynamic aggregate
-    template <size_t dim, typename T = float>
+    //Pure vector class
+    template <size_t dim = DYNAMIC, typename T = float>
     requires (dim >= 0)
-    class vector
+    class vector : public list<T, dim>
     {
-        T*const data = new T[dim];
-
         template <int n_rows, int n_cols, typename D>
-        requires (n_rows > 0 && n_cols > 0)
+        requires (n_rows >= 0 && n_cols >= 0)
         friend class matrix;
-
-        vector(T* data) : data{data}, ownsData{false} {}
-
-        T& operator[](int idx){return data[idx];}
-
-        bool ownsData = true;
 public:
-        T operator()(size_t idx)const{return data[idx];}
+        vector(const size_t dynamicSize = 0) : list<T, dim>(dynamicSize) {}
+        vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
+        vector(const T fillValue, const size_t dynamicSize = 0) : list<T, dim>(fillValue, dynamicSize) {}
 
-        ~vector()
+        vector(list<T, dim> base) : list<T, dim>(base) {}
+        vector(const vector& copy) : list<T, dim>(copy) {}
+        vector& operator=(const vector& copy)
         {
-            if(ownsData)
-                delete[] data;
-        }
-
-        vector(){}
-
-        vector(const std::initializer_list<T>& list) 
-        {
-            for(size_t i = 0; i < dim; ++i)
-                data[i] = list.begin()[i];
-        }
-        vector(const std::function<T(size_t idx, T)>& builder)
-        {
-            *this = create(builder);
-        }
-        vector(T fillValue)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                data[i] = fillValue;
-        }
-
-        vector& operator=(const std::initializer_list<T>& list)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                data[i] = list.begin()[i];
-        }
-        vector& operator=(const vector& rhs)
-        {
-            if(this == &rhs)
-                return *this;
-            for(size_t i = 0; i < dim; ++i)
-                this->data[i] = rhs.data[i];
+            list<T, dim>::operator=(copy);
             return *this;
         }
-        vector(const vector& rhs)
+        vector& operator=(const list<T, dim>& base)
         {
-            *this = rhs;
+            list<T, dim>::operator=(base);
+            return *this;
         }
 
-        const T& x = data[0];
-        const T& y = data[1];
-        const T& z = data[2];
-        const T& w = data[3];
+        const T& x = this->data[0];
+        const T& y = this->data[1];
+        const T& z = this->data[2];
+        const T& w = this->data[3];
 
         const T& r = x;
         const T& g = y;
@@ -211,44 +177,10 @@ public:
 
         static inline vector zero = vector(T(0));
 
-        static vector create(std::function<T(size_t idx, T srcValue)> builder, const vector& source = vector::zero)
-        {
-            T* data = new T[dim];
-            for(size_t i = 0; i < dim; ++i)
-                data[i] = builder(i, source(i));
-            vector result(data);
-            return result;
-        }
-
-        template <typename D>
-        D reduce(const std::function<void(T value, size_t idx, D& previous)>& reduction, D initial = D(0))const
-        {
-            D previous = initial;
-            for(size_t i = 0; i < dim; ++i)
-                reduction((*this)[i], i, previous);
-            return previous;
-        }
-        void for_each(const std::function<void(T value, size_t idx)>& action)const
-        {
-            for(size_t i = 0; i < dim; ++i)
-                action((*this)(i), i);
-        }
-        void mutate(const std::function<void(T& value, size_t idx)>& mutation)
-        {
-            for(size_t i = 0; i < dim; ++i)
-                mutation(this->data[i], i);
-        }
-        vector map(const std::function<T(size_t idx, T value)>& mapping)const
-        {
-            return create(mapping, *this);
-        }
-
-        vector copy()const{return map([](size_t idx, T val){return val;});}
-
         void print(std::ostream& stream) const
         {
             stream << "{";
-            for_each([&](T value, size_t idx)
+            this->for_each([&](T value, size_t idx)
             {
                 stream << value;
                 if(idx != dim - 1)
@@ -257,24 +189,24 @@ public:
             stream << "}";
         }
 
-        T operator*(const vector& rhs) const
-        {
-            return reduce<T>([&](T value, size_t idx, T& prev)
-            {
-                prev += value*rhs[idx];
-            });
-        }
         vector operator+ (const vector& rhs) const
         {
             const vector& lhs = *this;
-            return create([&](size_t idx, T srcValue)
+            return create([lhs, &rhs](size_t idx)
             {
                 return lhs[idx] + rhs[idx];
             });
         }
+        T operator*(const vector& rhs) const
+        {
+            return reduce<T>([&rhs](T val, size_t idx, T prev)
+            {
+                return prev + val*rhs[idx];
+            });
+        }
         vector operator-()const
         {
-            return map([](size_t idx, T value)
+            return map([](T value, size_t idx)
             {
                 return -value;
             });
@@ -286,7 +218,7 @@ public:
         }
         vector operator* (float coeff)const
         {
-            return map([&](size_t idx, T val)
+            return this->map([&coeff](T val, size_t idx) -> T
             {
                 return val * coeff;
             });
@@ -297,34 +229,35 @@ public:
         }
         bool operator== (const vector& rhs)
         {
-            return this->reduce<bool>([&rhs](T value, size_t idx, bool& prev)
+            return reduce<bool>([&rhs](T value, size_t idx, bool prev)
             {
                 if (prev == false)
-                    return;
-                prev = prev && (value == rhs[idx]);
+                    return prev;
+                return prev && (value == rhs[idx]);
             }, true);
         }
         vector direction() const
         {
             if(*this == zero)
                 return zero;
-            return (*this)*(1/magnitude());
+            return (*this)*(1.0/magnitude());
         }
-        void normalize()
+        vector& normalize()
         {
             *this = this->direction();
+            return *this;
         }
     };
-    template <int dim, typename T>
+    template <size_t dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
 
-    template <int dim, typename T>
+    template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
     {
         return u*coeff;
     }
 
-    template <int dim, typename T> 
+    template <typename T, size_t dim> 
     inline vector<dim, T> operator*(T coeff, vector<dim, T> u)
     {
         return u*coeff;
@@ -334,12 +267,13 @@ public:
         return vector<3>({a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x});
     }
 
+/*
     //nr_rows belongs to lhs, nr_cols belongs to rhs!
     template <int lhs_cols, int rhs_rows>
     concept multipliable = lhs_cols == rhs_rows;
 
     template <int n_rows, int n_cols = n_rows, typename T = float>
-    requires (n_rows > 0 && n_cols > 0)
+    requires (n_rows >= 0 && n_cols >= 0)
     class matrix
     {
         vector<n_rows*n_cols, T> data;
@@ -577,8 +511,9 @@ public:
     
     template <int dim, typename T = float>
     using row_vector = matrix<1, dim, T>;
+*/
 };
-
+/*
 namespace output
 {
     typedef math::vector<3, u_int8_t> RGB24;
@@ -626,7 +561,7 @@ public:
         }
     };
 };
-
+*/
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
@@ -637,18 +572,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 //    output::window window("title", 200, 200, a, b);
 
     using namespace math;
-    using namespace output;
+//    using namespace output;
 
     auto print = [](float v, size_t idx){std::cout << v;};
 
-    list<float, 3> s1({1, 2, 3});
-
-    s1.mutate([](float& val, size_t idx)
-    {
-        val = val*2;
-    });
-
-    s1.for_each(print);
+    vector<3> v1({1, 0, 1});
+    std::cout << v1.direction();
 
     return 0;
 }
