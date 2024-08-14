@@ -55,7 +55,9 @@ public:
             return dim;
         }
 
-        T operator[](size_t idx)const{return this->data[idx];}
+        T& operator[](size_t idx){return this->data[idx];}
+        T operator()(size_t idx)const{return this->data[idx];}
+
         list& operator=(const list& rhs)
         {
             if(this == &rhs)
@@ -148,9 +150,9 @@ public:
         requires (n_rows >= 0 && n_cols >= 0)
         friend class matrix;
 public:
-        vector(const size_t dynamicSize = 0) : list<T, dim>(dynamicSize) {}
-        vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
-        vector(const T fillValue, const size_t dynamicSize = 0) : list<T, dim>(fillValue, dynamicSize) {}
+        explicit vector(const size_t dynamicSize = 0) : list<T, dim>(dynamicSize) {}
+        explicit vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
+        explicit vector(const T fillValue, const size_t dynamicSize = 0) : list<T, dim>(fillValue, dynamicSize) {}
 
         vector(list<T, dim> base) : list<T, dim>(base) {}
         vector(const vector& copy) : list<T, dim>(copy) {}
@@ -267,7 +269,7 @@ public:
         return vector<3>({a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x});
     }
 
-/*
+
     //nr_rows belongs to lhs, nr_cols belongs to rhs!
     template <int lhs_cols, int rhs_rows>
     concept multipliable = lhs_cols == rhs_rows;
@@ -276,9 +278,9 @@ public:
     requires (n_rows >= 0 && n_cols >= 0)
     class matrix
     {
+        const bool dynamic = (n_rows * n_cols) == 0;
         vector<n_rows*n_cols, T> data;
         T& operator[](size_t idx) {return this->data[idx];}
-        matrix(){}
         static matrix get_identity()
         {
             static_assert(n_rows == n_cols);
@@ -293,14 +295,6 @@ public:
             return identity;
         }
 public:
-        //functors
-        typedef std::function<T(T value, int row, int col)>      Fmapping;
-        typedef std::function<T(int row, int col)>              Fbuilding;
-        typedef std::function<void(T& value, int row, int col)> Fmutation;
-        typedef std::function<void(T value, int row, int col)>    Faction;
-
-        matrix(Fbuilding builder){*this = matrix::create(builder);}
-        matrix(const std::vector<T>& list) : data{list}{}
         
         matrix(const matrix& other)
         {
@@ -315,21 +309,16 @@ public:
         }
         
         //Avoid this constructor when possible. Error prone.
-        matrix(const std::initializer_list<T>& list)
-        {
-            create([&list](int row, int col)
-            {
-                return list.begin()[row*n_cols + col];
-            }, *this);
-        }
-        matrix(T fillValue)
-        {
-            create([&fillValue](int row, int col)
-            {
-                return fillValue;
-            }, *this);
-        }
+        matrix(size_t dynamicSize = 0) : data{size_t(dynamicSize)} {}
+        matrix(const std::initializer_list<T>& list, size_t dynamicSize = 0) : data{list, dynamicSize} {}
+        matrix(T fillValue, size_t dynamicSize = 0) : data{fillValue, dynamicSize}{}
+
         T operator()(size_t r, size_t c)const{return data(r*n_cols + c);}
+
+        typedef std::function<T(T value, int row, int col)>      Fmapping;
+        typedef std::function<T(int row, int col)>              Fbuilding;
+        typedef std::function<void(T& value, int row, int col)> Fmutation;
+        typedef std::function<void(T value, int row, int col)>    Faction;
 
         matrix map(Fmapping mapping) const
         {
@@ -390,7 +379,6 @@ public:
             return result;
         }
 
-        
         void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
         {
             for(size_t i = 0; i < n_rows; ++i)
@@ -511,7 +499,7 @@ public:
     
     template <int dim, typename T = float>
     using row_vector = matrix<1, dim, T>;
-*/
+
 };
 /*
 namespace output
@@ -573,11 +561,13 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     using namespace math;
 //    using namespace output;
+    //TODO implement functors with dynamic size
+    matrix<2, 3> m1({1, 2, 3, 4, 5, 6});
 
-    auto print = [](float v, size_t idx){std::cout << v;};
-
-    vector<3> v1({1, 0, 1});
-    std::cout << v1.direction();
+    std::cout << m1.map([](float val, int row, int col)
+    {
+        return row;
+    });
 
     return 0;
 }
