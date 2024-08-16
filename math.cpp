@@ -34,7 +34,12 @@ public:
     };
 
     constexpr uint DYNAMIC = 0;
-    
+    struct empty 
+    {
+        empty& operator=(size_t){return *this;}
+        operator size_t()const{return size_t(0);}
+    };
+
     template <typename T, size_t dim = DYNAMIC>
     requires (dim >= 0)
     class list : public basic_aggregate<T>
@@ -46,7 +51,7 @@ public:
         template <typename D>
         using reduction = std::function<D(T val, size_t idx, D prev)>;
 
-        [[no_unique_address]] std::conditional_t<dim == 0, size_t, decltype(0)> dynamicSize;
+        [[no_unique_address]] std::conditional_t<dim == 0, size_t, empty> dynamicSize;
 public:
         inline size_t size() const
         {
@@ -269,18 +274,14 @@ public:
         return vector<3>({a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x});
     }
 
-
-    //nr_rows belongs to lhs, nr_cols belongs to rhs!
-    template <int lhs_cols, int rhs_rows>
-    concept multipliable = lhs_cols == rhs_rows;
-
     template <int n_rows, int n_cols = n_rows, typename T = float>
     requires (n_rows >= 0 && n_cols >= 0)
     class matrix
     {
-        const bool dynamic = (n_rows * n_cols) == 0;
         vector<n_rows*n_cols, T> data;
+
         T& operator[](size_t idx) {return this->data[idx];}
+        
         static matrix get_identity()
         {
             static_assert(n_rows == n_cols);
@@ -294,7 +295,27 @@ public:
             }, identity);
             return identity;
         }
+        
+        [[no_unique_address]] std::conditional_t<n_rows == DYNAMIC, size_t, empty> rowSize;
+        [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> colSize; 
 public:
+        inline size_t cols() const
+        {
+            if(n_cols == DYNAMIC)
+                return colSize;
+            return n_cols;
+        }
+        inline size_t rows() const
+        {
+            if(n_rows == DYNAMIC)
+                return rowSize;
+            return n_rows;
+        }
+
+        typedef std::function<T(T value, int row, int col)>      Fmapping;
+        typedef std::function<T(int row, int col)>              Fbuilding;
+        typedef std::function<void(T& value, int row, int col)> Fmutation;
+        typedef std::function<void(T value, int row, int col)>    Faction;
         
         matrix(const matrix& other)
         {
@@ -308,44 +329,69 @@ public:
             return *this;
         }
         
-        //Avoid this constructor when possible. Error prone.
-        matrix(size_t dynamicSize = 0) : data{size_t(dynamicSize)} {}
-        matrix(const std::initializer_list<T>& list, size_t dynamicSize = 0) : data{list, dynamicSize} {}
-        matrix(T fillValue, size_t dynamicSize = 0) : data{fillValue, dynamicSize}{}
-
-        T operator()(size_t r, size_t c)const{return data(r*n_cols + c);}
-
-        typedef std::function<T(T value, int row, int col)>      Fmapping;
-        typedef std::function<T(int row, int col)>              Fbuilding;
-        typedef std::function<void(T& value, int row, int col)> Fmutation;
-        typedef std::function<void(T value, int row, int col)>    Faction;
-
-        matrix map(Fmapping mapping) const
+        explicit matrix(size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
+        data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
         {
-            matrix<n_rows, n_cols, T> result = matrix::zero;
-            for(size_t i = 0; i < n_rows; ++i)
-                for(size_t j = 0; j < n_cols; ++j)
-                    result.data[i*n_cols + j] = mapping((*this)(i, j), i, j);
+            if(n_rows == DYNAMIC)
+                rowSize = dynamicSizeRows;
+            if(n_cols == DYNAMIC)
+                colSize = dynamicSizeCols;
+        }
+        explicit matrix(const std::initializer_list<T>& list, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
+        data(list, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
+        {
+            if(n_rows == DYNAMIC)
+                rowSize = dynamicSizeRows;
+            if(n_cols == DYNAMIC)
+                colSize = dynamicSizeCols;
+        }
+        explicit matrix(T fillValue, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
+        data(fillValue, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
+        {
+            if(n_rows == DYNAMIC)
+                rowSize = dynamicSizeRows;
+            if(n_cols == DYNAMIC)
+                colSize = dynamicSizeCols;            
+        }
+        explicit matrix(Fbuilding builder, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
+        data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
+        {
+            if(n_rows == DYNAMIC)
+                rowSize = dynamicSizeRows;
+            if(n_cols == DYNAMIC)
+                colSize = dynamicSizeCols;
+            create(builder, *this);
+        }
+
+        T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
+
+
+        inline matrix map(Fmapping mapping) const
+        {
+            matrix<n_rows, n_cols, T> result(rows(), cols());
+            for(size_t i = 0; i < rows(); ++i)
+                for(size_t j = 0; j < cols(); ++j)
+                    result.data[i*cols() + j] = mapping((*this)(i, j), i, j);
             //XXX returning by copy!
             return result;
         }
-        static void create(Fbuilding build, matrix& result)
+        inline static void create(Fbuilding build, matrix& result)
         {
-            for(size_t i = 0; i < n_rows; ++i)
-                for(size_t j = 0; j < n_cols; ++j)
-                    result.data[i*n_cols + j] = build(i, j);
+            for(size_t i = 0; i < result.rows(); ++i)
+                for(size_t j = 0; j < result.cols(); ++j)
+                    result.data[i*cols() + j] = build(i, j);
         }
-        matrix& mutate(Fmutation mutation)
+        inline matrix& mutate(Fmutation mutation)
         {
-            for(size_t i = 0; i < n_rows; ++i)
-                for(size_t j = 0; j < n_cols; ++j)
-                    mutation(this->data[i*n_cols + j], i, j);
+            for(size_t i = 0; i < rows(); ++i)
+                for(size_t j = 0; j < cols(); ++j)
+                    mutation(this->data[i*cols() + j], i, j);
             return *this;
         }
-        const matrix& for_each(Faction action) const
+        inline const matrix& for_each(Faction action) const
         {
-            for(size_t i = 0; i < n_rows; ++i)
-                for(size_t j = 0; j < n_cols; ++j)
+            for(size_t i = 0; i < rows(); ++i)
+                for(size_t j = 0; j < cols(); ++j)
                     action((*this)(i, j), i, j);
             return *this;
         }
@@ -356,50 +402,51 @@ public:
         //keep in mind that modifying this vector will mutate the matrix!
         inline vector<n_cols, T> row(size_t idx)
         {
-            assert(idx < n_rows);
-            const size_t startIdx = idx*n_cols;
-            vector<n_cols, T> result(&this->data[startIdx]);
+            assert(idx < rows());
+            const size_t startIdx = idx*cols();
+            vector<n_cols, T> result(&this->data[startIdx], cols());
             return result;
         }
         inline vector<n_cols, T> row_copy(size_t idx) const
         {
-            assert(idx < n_rows);
-            const size_t startIdx = idx*n_cols;
-            vector<n_cols, T> result;
-            for(size_t i = 0; i < n_cols; ++i)
+            assert(idx < rows());
+            const size_t startIdx = idx*cols();
+            vector<n_cols, T> result(cols());
+            for(size_t i = 0; i < cols(); ++i)
                 result[i] = this->data(startIdx + i);
             return result;
         }
         inline vector<n_rows, T> col(size_t idx)const
         {
-            assert(idx < n_cols);
+            assert(idx < cols());
             vector<n_rows, T> result;
             for(size_t i = 0; i < n_rows; ++i)
-                result.data[i] = this->data(idx + i*n_cols);
+                result.data[i] = this->data(idx + i*cols());
             return result;
         }
 
         void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
         {
-            for(size_t i = 0; i < n_rows; ++i)
+            for(size_t i = 0; i < rows(); ++i)
             {
-                vector<n_cols, T> row(this->row(i).data);
+                vector<n_cols, T> row(this->row(i).data, cols());
                 mutation(row, i);
             }
         }
         void for_each_row(const std::function<void(const vector<n_cols, T>& row, size_t idx)>& action)const
         {
-            for(size_t i = 0; i < n_rows; ++i)
+            for(size_t i = 0; i < rows(); ++i)
                 action(row_copy(i), i);
         }
         void set_row(size_t idx, const vector<n_cols, T>& row)
         {
+            assert(row.size() == cols());
             this->row(idx) = row;
         }
         matrix map_rows(const std::function<vector<n_cols, T>(const vector<n_cols, T>& row, size_t idx)>& mapping) const
         {
             matrix result = matrix::zero;
-            for(size_t i = 0; i < n_rows; ++i)
+            for(size_t i = 0; i < rows(); ++i)
                 result.set_row(i, mapping(this->row_copy(i), i));
             return result;
         }
@@ -412,8 +459,8 @@ public:
                 if (col == 0)
                     stream << "{";
                 stream << value;
-                if(col == n_cols - 1)
-                    if (row == n_rows - 1)
+                if(col == cols() - 1)
+                    if (row == rows() - 1)
                         stream << "}";
                     else
                         stream << "}, ";
@@ -437,10 +484,11 @@ public:
         }
 
         template <int nr_rows, int nr_cols>
-        matrix<n_rows, nr_cols> operator*(const matrix<nr_rows, nr_cols, T> rhs) const requires math::multipliable<n_cols, nr_rows>
+        matrix<n_rows, nr_cols> operator*(const matrix<nr_rows, nr_cols, T> rhs) const
         {
             const matrix& lhs = (*this);
-            const int mul_size = nr_rows; // == n_cols
+            assert(rhs.rows() == lhs.cols());
+            const int mul_size = rhs.rows();
             matrix result;
             matrix<n_rows, nr_cols>::create([&](int row, int col)
             {
@@ -458,7 +506,7 @@ public:
 
         inline matrix<n_cols, n_rows, T> transpose()
         {
-            matrix<n_cols, n_rows> result;
+            matrix<n_cols, n_rows> result(cols(), rows());
             matrix<n_cols, n_rows, T>::create([&](int row, int col)
             {
                 return (*this)(col, row);
@@ -482,6 +530,7 @@ public:
         return m*coeff;
     }
 
+    //make this a build script
     template <int dim, typename T = float>
     inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals)
     {
@@ -561,13 +610,15 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     using namespace math;
 //    using namespace output;
-    //TODO implement functors with dynamic size
-    matrix<2, 3> m1({1, 2, 3, 4, 5, 6});
-
-    std::cout << m1.map([](float val, int row, int col)
+//TODO operator= not mutating values
+    matrix<DYNAMIC> m1(2.0, size_t(2), size_t(3));
+    matrix<DYNAMIC> m2(3.0, 2, 3);
+    m2 = (m1.map([](float val, int row, int col)
     {
         return row;
-    });
+    }));
+
+    std::cout << m2;
 
     return 0;
 }
