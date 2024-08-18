@@ -79,6 +79,12 @@ public:
                     this->data[i] = rhs.data[i];
             return *this;
         }
+        list& operator=(const std::initializer_list<T>& data)
+        {
+            assert(data.size() == this->size());
+            std::copy(data.begin(), data.end(), this->data);
+            return *this;
+        }
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
         list(const size_t dynamicSize = 0)
@@ -159,7 +165,7 @@ public:
         friend class matrix;
 public:
         explicit vector(const size_t dynamicSize = 0) : list<T, dim>(dynamicSize) {}
-        explicit vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
+        vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
         explicit vector(const T fillValue, const size_t dynamicSize = 0) : list<T, dim>(fillValue, dynamicSize) {}
         explicit vector(T* const data, size_t dynamicSize = 0) : list<T, dim>(data, dynamicSize) {}
 
@@ -173,6 +179,11 @@ public:
         vector& operator=(const list<T, dim>& base)
         {
             list<T, dim>::operator=(base);
+            return *this;
+        }
+        vector& operator=(const std::initializer_list<T>& data)
+        {
+            list<T, dim>::operator=(data);
             return *this;
         }
 
@@ -321,7 +332,7 @@ public:
         typedef std::function<void(T& value, int row, int col)> Fmutation;
         typedef std::function<void(T value, int row, int col)>    Faction;
         
-        matrix(const matrix& other)
+        matrix(const matrix& other) : matrix(other.rows(), other.cols())
         {
             *this = other;
         }
@@ -454,6 +465,11 @@ public:
                 result.set_row(i, mapping(this->row_copy(i), i));
             return result;
         }
+        
+        T& element(size_t r, size_t c)
+        {
+            return data[r*cols() + c];
+        } 
 
         void print(std::ostream& stream) const
         {
@@ -563,7 +579,7 @@ public:
     using row_vector = matrix<1, dim, T>;
 
 };
-/*
+
 namespace output
 {
     typedef math::vector<3, u_int8_t> RGB24;
@@ -574,12 +590,16 @@ namespace output
     template<uint nRows, uint nCols>
     using alphabuffer = math::matrix<nRows, nCols, uint8_t>;
 
-    template<uint nLines, uint lineSpan>
+    template<uint nLines = math::DYNAMIC, uint lineSpan = nLines>
     struct framebuffer
     {
-        colorbuffer<nLines, lineSpan> colorPlane = colorbuffer<nLines, lineSpan>(RGB24({100, 100, 100}));
-        alphabuffer<nLines, lineSpan> alphaPlane = alphabuffer<nLines, lineSpan>(1.0);
+        framebuffer(size_t nLinesDynamic = 0, size_t lineSpanDynamic = 0) : 
+        colorPlane(RGB24(uint8_t(255)), size_t(nLinesDynamic), size_t(lineSpanDynamic)),
+        alphaPlane(uint8_t(1.0), size_t(nLinesDynamic), size_t(lineSpanDynamic)) {}
+        colorbuffer<nLines, lineSpan> colorPlane;
+        alphabuffer<nLines, lineSpan> alphaPlane;
     };
+    
     class window
     {
 public:
@@ -597,8 +617,8 @@ public:
             SDL_Surface* srf = SDL_GetWindowSurface(handle);
             SDL_LockSurface(srf);
             uint32_t* pixelPtr = (uint32_t*)srf->pixels;
-            for(size_t i = 0; i < nLines; ++i)
-                for(size_t j = 0; j < lineSpan; ++j)
+            for(size_t i = 0; i < frame.colorPlane.rows(); ++i)
+                for(size_t j = 0; j < frame.colorPlane.cols(); ++j)
                 {
                     const RGB24& RGB = frame.colorPlane(i, j);
                     pixelPtr[i*srf->w + j] = SDL_MapRGB(srf->format, RGB.r, RGB.g, RGB.b);
@@ -611,7 +631,38 @@ public:
         }
     };
 };
-*/
+
+namespace renderer
+{
+    
+    class rasterizer
+    {
+public:
+        output::framebuffer<math::DYNAMIC> raster;
+        rasterizer(size_t width, size_t height) : raster(height, width){}
+
+        void rasterize(math::vector<2, uint> pixelLoc, output::RGB24 color)
+        {
+            raster.colorPlane.element(pixelLoc.y, pixelLoc.x) = color;
+        }
+        output::framebuffer<math::DYNAMIC> get_framebuffer(math::vector<2, uint> renderTargetSize)
+        {
+            if(renderTargetSize.x == raster.colorPlane.cols() && renderTargetSize.y == raster.colorPlane.rows())
+                return raster;
+
+            output::framebuffer<math::DYNAMIC> renderTarget(renderTargetSize.y, renderTargetSize.x);
+            renderTarget.colorPlane.mutate([this, &renderTargetSize](output::RGB24& pixel, int row, int col) -> void
+            {
+                float vCenter = float(row + 0.5)/renderTargetSize.y; //[0, 1)
+                float hCenter = float(col + 0.5)/renderTargetSize.x;
+
+                pixel = this->raster.colorPlane(vCenter * raster.colorPlane.rows(), hCenter * raster.colorPlane.cols());
+            });
+            return renderTarget;
+        }
+    };
+};
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
@@ -619,12 +670,30 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     constexpr uint a = 700;
     constexpr uint b = 500;
-//    output::window window("title", 200, 200, a, b);
+    output::window window("title", 200, 200, a, b);
 
     using namespace math;
-//    using namespace output;
-    matrix<2, 2> m1([](int row, int col)->float{return row + col;});
-    matrix<2, 2> m2(float(1));
-    std::cout << m2 * m1;
+    using namespace output;
+
+    framebuffer<DYNAMIC> frame(b, a);
+
+    frame.colorPlane.mutate([=](RGB24& val, int row, int col)
+    {
+        val = RGB24({uint8_t(255*(float(row)/b)), 100, uint8_t(255*(float(col)/a))});
+    });
+
+    renderer::rasterizer R(2, 2);
+    R.rasterize({0, 0}, {100, 0, 0});
+    R.rasterize({0, 1}, {0, 100, 0});
+    R.rasterize({1, 0}, {0, 0, 100});
+    R.rasterize({1, 1}, {0, 0, 0});
+    ;
+
+    window.write_frame(R.get_framebuffer(vector<2, uint>({a, b})));
+
+    window.update_surface();
+
+    SDL_Delay(5000);
+
     return 0;
 }
