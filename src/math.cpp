@@ -43,6 +43,10 @@ public:
     requires (dim >= 0)
     class list : public basic_aggregate<T>
     {
+        template<typename D, size_t size>
+        requires (size >= 0)
+        friend class list;
+
         typedef std::function<T(size_t idx)> builder;
         typedef std::function<T(T value, size_t idx)> mapping;
         typedef std::function<void(T& value, size_t idx)> mutation;
@@ -61,12 +65,44 @@ public:
 
         T& operator[](size_t idx){return this->data[idx];}
         T operator()(size_t idx)const{return this->data[idx];}
-
+        //return subset of list starting from fromIdx, to and excluding toIdx, such that fromIdx = 0,
+        //toIdx = size() will return a copy of the entire list.
+        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)
+        {
+            assert (fromIdx <= toIdx && toIdx <= size());
+            if(fromIdx == toIdx)
+                return list<T>();
+            list<T, DYNAMIC> result(toIdx - fromIdx);
+            list<T, DYNAMIC>::create([this, fromIdx](size_t idx)
+            {
+                return (*this)(idx + fromIdx);
+            }, result);
+            return result;
+        }
+        list<T, DYNAMIC> offset(size_t x){return (*this)(x, size());}
+        //this allows lists of varying sizes to copied into one another, is this too loose?
+        template<size_t size>
+        list& operator=(const list<T, size>& rhs)
+        {
+            const size_t sizeConstraint = std::min(rhs.size(), this->size());
+            if(rhs.ownsData == false)
+            {
+                assert(this->size() == rhs.size());
+                if(this->ownsData)
+                    delete[] this->data;
+                this->data = rhs.data;
+                this->ownsData = false;
+            }
+            else
+                for(size_t i = 0; i < sizeConstraint; ++i)
+                    this->data[i] = rhs.data[i];
+            return *this;
+        }
         list& operator=(const list& rhs)
         {
             if(this == &rhs)
                 return *this;
-            assert(this->size() == rhs.size());
+            assert(rhs.size() == this->size());
             if(rhs.ownsData == false)
             {
                 if(this->ownsData)
@@ -75,8 +111,10 @@ public:
                 this->ownsData = false;
             }
             else
-                for(size_t i = 0; i < size(); ++i)
+            {
+                for(size_t i = 0; i < rhs.size(); ++i)
                     this->data[i] = rhs.data[i];
+            }
             return *this;
         }
         list& operator=(const std::initializer_list<T>& data)
@@ -104,6 +142,10 @@ public:
         }
         list(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list::list(dynamicSize)
         {
+            if(dim == DYNAMIC)
+                this->dynamicSize = list.size();
+            else
+                assert(list.size() == dim);
             std::copy(list.begin(), list.end(), this->data);
         }
         explicit list(const T fillValue, const size_t dynamicSize = 0) : list(dynamicSize)
@@ -118,7 +160,7 @@ public:
             for(size_t i = 0; i < out.size(); ++i)
                 out.data[i] = fnc(i);
         }
-        list map(mapping fnc) const
+        [[nodiscard]] list map(mapping fnc) const
         {
             list result(size_t(this->dynamicSize));
             create([&fnc, this](size_t idx) -> T
@@ -140,7 +182,7 @@ public:
             return *this;
         }
         template <typename D>
-        D reduce(reduction<D> fnc, D initial = D(0)) const
+        [[nodiscard]]D reduce(reduction<D> fnc, D initial = D(0)) const
         {
             D result = initial;
             for(size_t i = 0; i < size(); ++i)
@@ -157,6 +199,41 @@ public:
                 return static_cast<D>(this->data[idx]);
             }, result);
             return result;
+        }
+
+        template<size_t size = DYNAMIC>
+        void insert(const list<T, size>& data, size_t fromIdx)
+        {
+            auto pushedData = (*this)(fromIdx, this->size());
+
+            this->resize(data.size() + this->size());
+
+            this->overwrite_with(data, fromIdx);
+
+            this->overwrite_with(pushedData, fromIdx + data.size());
+        }
+        //If data.size() + fromIdx > size() then data will be truncated to fit into size() - fromIdx
+        template<size_t size = DYNAMIC>
+        void overwrite_with(const list<T, size>& data, size_t fromIdx)
+        {
+            size_t copySize = fromIdx + data.size() > this->size() ? this->size() - fromIdx : data.size();
+            list<T, DYNAMIC> window(&this->data[fromIdx], copySize);
+            window = data;
+        }
+
+        void resize(size_t newSize) requires(dim == DYNAMIC)
+        {
+            assert(this->ownsData);
+
+            T* newData = new T[newSize];
+            
+            size_t minSize = std::min(this->size(), newSize);
+            std::copy(this->data, this->data + minSize, newData);
+            
+            delete[] this->data;
+            this->data = newData;
+
+            this->dynamicSize = newSize;
         }
 
         virtual ~list() = default;
@@ -178,8 +255,16 @@ protected:
 public:
         using list<T, dim>::list;
 
+        template<size_t size>
+        vector& operator=(const vector<size, T>& other)
+        {
+            list<T, dim>::operator=(other);
+            return *this;
+        }
         vector& operator=(const vector& other)
         {
+            if(this == &other)
+                return *this;
             list<T, dim>::operator=(other);
             return *this;
         };
@@ -300,6 +385,10 @@ public:
     requires (n_rows >= 0 && n_cols >= 0)
     class matrix
     {
+        template <int r, int c, typename D>
+        requires (r >= 0 && c >= 0)
+        friend class matrix;
+
         vector<n_rows*n_cols, T> data;
 
         T& operator[](size_t idx) {return this->data[idx];}
@@ -395,7 +484,7 @@ public:
         T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
 
 
-        inline matrix map(Fmapping mapping) const
+        [[nodiscard]]inline matrix map(Fmapping mapping) const
         {
             matrix<n_rows, n_cols, T> result(rows(), cols());
             for(size_t i = 0; i < rows(); ++i)
@@ -428,7 +517,7 @@ public:
         const static inline matrix<n_rows, n_cols, T> zero = matrix(T(0));
         const static inline matrix<n_rows, n_cols, T> I = matrix::get_identity();
 
-        //keep in mind that modifying this vector will mutate the matrix!
+        //BEWARE! modifying this vector will mutate the matrix. Use row_copy() instead.
         inline vector<n_cols, T> row(size_t idx)
         {
             assert(idx < rows());
@@ -453,7 +542,7 @@ public:
                 result.data[i] = this->data(idx + i*cols());
             return result;
         }
-
+        
         void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
         {
             for(size_t i = 0; i < rows(); ++i)
@@ -467,12 +556,16 @@ public:
             for(size_t i = 0; i < rows(); ++i)
                 action(row_copy(i), i);
         }
-        void set_row(size_t idx, const vector<n_cols, T>& row)
+        
+        template<size_t dim>
+        requires (dim == n_cols || dim == DYNAMIC)
+        void set_row(size_t idx, const vector<dim, T>& row)
         {
             assert(row.size() == cols());
             this->row(idx) = row;
         }
-        matrix map_rows(const std::function<vector<n_cols, T>(const vector<n_cols, T>& row, size_t idx)>& mapping) const
+        
+        [[nodiscard]]matrix map_rows(const std::function<vector<n_cols, T>(const vector<n_cols, T>& row, size_t idx)>& mapping) const
         {
             matrix result;
             for(size_t i = 0; i < rows(); ++i)
@@ -480,6 +573,20 @@ public:
             return result;
         }
         
+        template <size_t nRows, size_t nCols>
+        matrix& insert_rows(const matrix<nRows, nCols, T>& rows, size_t fromIdx) 
+        requires (n_rows == DYNAMIC && (nCols == n_cols || n_cols == DYNAMIC))
+        {
+            assert(rows.cols() == this->cols());
+            this->data.insert(rows.data, fromIdx * rows.cols());
+            this->rowSize += rows.rows();
+
+            return *this;
+        }
+        
+        template <size_t nRows, size_t nCols>
+        void push_rows(const matrix<nRows, nCols, T>& rows){insert_rows(rows, this->rows());} 
+
         T& element(size_t r, size_t c)
         {
             return data[r*cols() + c];
@@ -547,7 +654,8 @@ public:
             return map([&](T value, int row, int col){return coeff*value;});
         }
 
-        inline matrix<n_cols, n_rows, T> transpose()
+
+        [[nodiscard]]inline matrix<n_cols, n_rows, T> transpose()const
         {
             matrix<n_cols, n_rows> result(cols(), rows());
             matrix<n_cols, n_rows, T>::create([&](int row, int col)
@@ -556,14 +664,15 @@ public:
             }, result);
             return result;
         }
-        inline matrix reciprocal()
+        [[nodiscard]]inline matrix reciprocal()
         {
             return map([](T value, int row, int col)
             {
                 return value == T(0) ? value : 1.0/value; 
             });
         }
-
+        
+        //row or column vectors convert to pure vectors 
         operator vector<n_rows * n_cols, T>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
         {
             assert(cols() == 1 || rows() == 1);
@@ -615,6 +724,7 @@ namespace output
         framebuffer(size_t nLinesDynamic = 0, size_t lineSpanDynamic = 0) : 
         colorPlane(RGB24(uint8_t(255)), size_t(nLinesDynamic), size_t(lineSpanDynamic)),
         alphaPlane(uint8_t(1.0), size_t(nLinesDynamic), size_t(lineSpanDynamic)) {}
+        
         colorbuffer<nLines, lineSpan> colorPlane;
         alphabuffer<nLines, lineSpan> alphaPlane;
     };
@@ -653,7 +763,6 @@ public:
 
 namespace renderer
 {
-    
     class rasterizer
     {
 public:
@@ -671,10 +780,12 @@ public:
                 return raster;
 
             output::framebuffer<math::DYNAMIC> renderTarget(renderTargetSize.y, renderTargetSize.x);
+
             renderTarget.colorPlane.mutate([this, &renderTargetSize](output::RGB24& pixel, int row, int col) -> void
             {
-                float vCenter = float(row + 0.5)/renderTargetSize.y; //[0, 1)
-                float hCenter = float(col + 0.5)/renderTargetSize.x;
+                constexpr uint halfPixel = 0.5;
+                float vCenter = float(row + halfPixel)/renderTargetSize.y; //[0, 1)
+                float hCenter = float(col + halfPixel)/renderTargetSize.x;
 
                 pixel = this->raster.colorPlane(vCenter * raster.colorPlane.rows(), hCenter * raster.colorPlane.cols());
             });
@@ -725,7 +836,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     window.update_surface();
 
-    SDL_Delay(5000);
+    SDL_Delay(1000);
 
     return 0;
 }
