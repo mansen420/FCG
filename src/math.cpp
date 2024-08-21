@@ -556,7 +556,7 @@ public:
             for(size_t i = 0; i < rows(); ++i)
                 action(row_copy(i), i);
         }
-        
+            
         template<size_t dim>
         requires (dim == n_cols || dim == DYNAMIC)
         void set_row(size_t idx, const vector<dim, T>& row)
@@ -586,6 +586,13 @@ public:
         
         template <size_t nRows, size_t nCols>
         void push_rows(const matrix<nRows, nCols, T>& rows){insert_rows(rows, this->rows());} 
+
+        //Returns reference to submatrix. Allows mutation!
+        matrix<DYNAMIC, DYNAMIC, T> subview(size_t fromIdx, size_t nRows)
+        {
+            vector<DYNAMIC, T> dataWindow(&this->data[fromIdx * this->cols()], nRows * this->cols());
+            return matrix<DYNAMIC, DYNAMIC, T>(dataWindow, nRows, this->cols());
+        }
 
         T& element(size_t r, size_t c)
         {
@@ -823,6 +830,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     vector<2> scrX = WtoSCR * col_vector<2>(canonX);
     vector<2> scrY = WtoSCR * col_vector<2>(canonY);
+
+    matrix<2, 2> m1({1, 2, 3, 4});
+    m1.subview(0, 1).element(0, 0) = -2;
+    std::cout << m1;
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer);
     R.rasterize(scrX, RGB24(uint8_t(0)));
