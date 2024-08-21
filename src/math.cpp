@@ -87,7 +87,7 @@ public:
         }
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
-        list(const size_t dynamicSize = 0)
+        explicit list(const size_t dynamicSize = 0)
         {
             if(dim == DYNAMIC)
             {
@@ -102,7 +102,7 @@ public:
             if(dim == DYNAMIC)
                 this->dynamicSize = dynamicSize;
         }
-        explicit list(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list::list(dynamicSize)
+        list(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list::list(dynamicSize)
         {
             std::copy(list.begin(), list.end(), this->data);
         }
@@ -120,7 +120,7 @@ public:
         }
         list map(mapping fnc) const
         {
-            list result;
+            list result(size_t(this->dynamicSize));
             create([&fnc, this](size_t idx) -> T
             {
                 return fnc(this->data[idx], idx);
@@ -148,6 +148,17 @@ public:
             return result;
         }
 
+        template<typename D>
+        operator list<D, dim>const()
+        {
+            list<D, dim> result(this->dynamicSize);
+            list<D, dim>::create([this](size_t idx) -> D
+            {
+                return static_cast<D>(this->data[idx]);
+            }, result);
+            return result;
+        }
+
         virtual ~list() = default;
     };
 
@@ -160,31 +171,26 @@ public:
     requires (dim >= 0)
     class vector : public list<T, dim>
     {
+protected:
         template <int n_rows, int n_cols, typename D>
         requires (n_rows >= 0 && n_cols >= 0)
         friend class matrix;
 public:
-        explicit vector(const size_t dynamicSize = 0) : list<T, dim>(dynamicSize) {}
-        vector(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list<T, dim>(list, dynamicSize){}
-        explicit vector(const T fillValue, const size_t dynamicSize = 0) : list<T, dim>(fillValue, dynamicSize) {}
-        explicit vector(T* const data, size_t dynamicSize = 0) : list<T, dim>(data, dynamicSize) {}
+        using list<T, dim>::list;
 
-        vector(list<T, dim> base) : list<T, dim>(base) {}
-        vector(const vector& copy) : list<T, dim>(copy) {}
-        vector& operator=(const vector& copy)
+        vector& operator=(const vector& other)
         {
-            list<T, dim>::operator=(copy);
+            list<T, dim>::operator=(other);
             return *this;
-        }
-        vector& operator=(const list<T, dim>& base)
+        };
+
+        vector(const vector& other) : list<T, dim>(other){}
+        vector(const list<T, dim>& other) : list<T, dim>(other){}
+
+        template <typename D>
+        operator vector<dim, D>const()
         {
-            list<T, dim>::operator=(base);
-            return *this;
-        }
-        vector& operator=(const std::initializer_list<T>& data)
-        {
-            list<T, dim>::operator=(data);
-            return *this;
+            return list<T, dim>::operator const math::list<D, dim>();
         }
 
         const T& x = this->data[0];
@@ -272,7 +278,8 @@ public:
     };
     template <size_t dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
-
+    
+    
     template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
     {
@@ -376,6 +383,13 @@ public:
             if(n_cols == DYNAMIC)
                 colSize = dynamicSizeCols;
             create(builder, *this);
+        }
+        explicit matrix(const vector<n_rows*n_cols>& data, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : data{data} 
+        {
+            if(n_rows == DYNAMIC)
+                rowSize = dynamicSizeRows;
+            if(n_cols == DYNAMIC)
+                colSize = dynamicSizeCols;
         }
 
         T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
@@ -549,6 +563,12 @@ public:
                 return value == T(0) ? value : 1.0/value; 
             });
         }
+
+        operator vector<n_rows * n_cols, T>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
+        {
+            assert(cols() == 1 || rows() == 1);
+            return data;
+        }
     };
     template <int n_rows, int n_cols = n_rows, typename T = float>
     std::ostream& operator<<(std::ostream& stream, const matrix<n_rows, n_cols, T>& m){m.print(stream); return stream;}
@@ -561,7 +581,7 @@ public:
 
     //make this a build script
     template <int dim, typename T = float>
-    inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals)
+    inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals, size_t dynamicSize = 0)
     {
         return matrix<dim, dim, T>([&](int row, int col)
         {
@@ -569,7 +589,7 @@ public:
                 return diagonals[row];
             else
                 return T(0);
-        });
+        }, dynamicSize);
     }
 
     template <int dim, typename T = float>
@@ -577,7 +597,6 @@ public:
     
     template <int dim, typename T = float>
     using row_vector = matrix<1, dim, T>;
-
 };
 
 namespace output
@@ -645,7 +664,8 @@ public:
         {
             raster.colorPlane.element(pixelLoc.y, pixelLoc.x) = color;
         }
-        output::framebuffer<math::DYNAMIC> get_framebuffer(math::vector<2, uint> renderTargetSize)
+
+        output::framebuffer<math::DYNAMIC> get_framebuffer(const math::vector<2, uint>& renderTargetSize)
         {
             if(renderTargetSize.x == raster.colorPlane.cols() && renderTargetSize.y == raster.colorPlane.rows())
                 return raster;
@@ -668,28 +688,40 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return -1;
 
-    constexpr uint a = 700;
-    constexpr uint b = 500;
-    output::window window("title", 200, 200, a, b);
+    constexpr uint wFramebuffer = 50;
+    constexpr uint hFramebuffer = 50;
+    constexpr uint wWindow = 200;
+    constexpr uint hWindow = 200;
 
     using namespace math;
     using namespace output;
 
-    framebuffer<DYNAMIC> frame(b, a);
+    window window("title", 200, 200, wWindow, hWindow);
 
-    frame.colorPlane.mutate([=](RGB24& val, int row, int col)
-    {
-        val = RGB24({uint8_t(255*(float(row)/b)), 100, uint8_t(255*(float(col)/a))});
-    });
+    //scene
+    vector<2> canonY = {0, 1};
+    vector<2> canonX = {1, 0};
 
-    renderer::rasterizer R(2, 2);
-    R.rasterize({0, 0}, {100, 0, 0});
-    R.rasterize({0, 1}, {0, 100, 0});
-    R.rasterize({1, 0}, {0, 0, 100});
-    R.rasterize({1, 1}, {0, 0, 0});
-    ;
+    constexpr float Wx = 30.0;
+    constexpr float Wy = 30.0;
 
-    window.write_frame(R.get_framebuffer(vector<2, uint>({a, b})));
+    //construct screen transform 
+    matrix<2> WtoNDC = get_scale<2>({1.f/Wx, 1.f/Wy});
+    matrix<2> NDCtoSCR = get_scale<2>({wFramebuffer, hFramebuffer});
+    matrix<2> WtoSCR = NDCtoSCR * WtoNDC;
+
+    vector<2> scrX = WtoSCR * col_vector<2>(canonX);
+    vector<2> scrY = WtoSCR * col_vector<2>(canonY);
+
+    renderer::rasterizer R(wFramebuffer, hFramebuffer);
+    R.rasterize(scrX, RGB24(uint8_t(0)));
+    R.rasterize(scrY, RGB24(uint8_t(0)));
+    // R.rasterize({0, 0}, {100, 0, 0});
+    // R.rasterize({0, 1}, {0, 100, 0});
+    // R.rasterize({1, 0}, {0, 0, 100});
+    // R.rasterize({1, 1}, {0, 0, 0});
+
+    window.write_frame(R.get_framebuffer(vector<2, uint>({wWindow, hWindow})));
 
     window.update_surface();
 
