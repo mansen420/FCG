@@ -63,13 +63,21 @@ public:
             return dim;
         }
 
-        T& operator[](size_t idx){return this->data[idx];}
-        T operator()(size_t idx)const{return this->data[idx];}
+        T& operator[](size_t idx)
+        {
+            assert(idx < size());
+            return this->data[idx];
+        }
+        T operator()(size_t idx)const
+        {
+            assert(idx < size());
+            return this->data[idx];
+        }
         //return subset of list starting from fromIdx, to and excluding toIdx, such that fromIdx = 0,
         //toIdx = size() will return a copy of the entire list.
         list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)
         {
-            assert (fromIdx <= toIdx && toIdx <= size());
+            assert (fromIdx <= toIdx && toIdx < size());
             if(fromIdx == toIdx)
                 return list<T>();
             list<T, DYNAMIC> result(toIdx - fromIdx);
@@ -80,6 +88,13 @@ public:
             return result;
         }
         list<T, DYNAMIC> offset(size_t x){return (*this)(x, size());}
+        
+        inline T last()
+        {
+            assert(this->size() > 0);
+            return this->data[this->size() - 1];
+        }
+
         //this allows lists of varying sizes to copied into one another, is this too loose?
         template<size_t size>
         list& operator=(const list<T, size>& rhs)
@@ -340,7 +355,7 @@ public:
         {
             return sqrt((*this) * (*this));
         }
-        bool operator== (const vector& rhs)
+        inline bool operator== (const vector& rhs)
         {
             return reduce<bool>([&rhs](T value, size_t idx, bool prev)
             {
@@ -349,15 +364,25 @@ public:
                 return prev && (value == rhs[idx]);
             }, true);
         }
-        vector direction() const
+        inline vector direction() const
         {
             if(*this == zero)
                 return zero;
             return (*this)*(1.0/magnitude());
         }
-        vector& normalize()
+        inline vector& normalize()
         {
             *this = this->direction();
+            return *this;
+        }
+        inline vector& homogenize()
+        {
+            if(this->last() == T(0))
+                return *this;
+            this->mutate([this](T& val, size_t idx) -> void
+            {
+                val = val / this->last();
+            });
             return *this;
         }
     };
@@ -393,10 +418,14 @@ public:
 
         T& operator[](size_t idx) {return this->data[idx];}
         
-        static matrix get_identity()
+        
+        [[no_unique_address]] std::conditional_t<n_rows == DYNAMIC, size_t, empty> rowSize;
+        [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> colSize; 
+public:
+        static matrix get_identity(size_t dynamicSize = 0)
         {
             static_assert(n_rows == n_cols);
-            matrix identity;
+            matrix identity(dynamicSize);
             matrix::create([](int row, int col)
             {
                 if (row == col)
@@ -407,9 +436,6 @@ public:
             return identity;
         }
         
-        [[no_unique_address]] std::conditional_t<n_rows == DYNAMIC, size_t, empty> rowSize;
-        [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> colSize; 
-public:
         inline size_t cols() const
         {
             if(n_cols == DYNAMIC)
@@ -587,7 +613,8 @@ public:
         template <size_t nRows, size_t nCols>
         void push_rows(const matrix<nRows, nCols, T>& rows){insert_rows(rows, this->rows());} 
 
-        //Returns reference to submatrix. Allows mutation!
+        //Returns reference to submatrix. Allows mutation! 
+        //TODO add copy() method
         matrix<DYNAMIC, DYNAMIC, T> subview(size_t fromIdx, size_t nRows)
         {
             vector<DYNAMIC, T> dataWindow(&this->data[fromIdx * this->cols()], nRows * this->cols());
@@ -661,6 +688,7 @@ public:
             return map([&](T value, int row, int col){return coeff*value;});
         }
 
+        //TODO implement operator= for DYNAMIC to static sized matrices
 
         [[nodiscard]]inline matrix<n_cols, n_rows, T> transpose()const
         {
@@ -679,15 +707,16 @@ public:
             });
         }
         
-        //row or column vectors convert to pure vectors 
-        operator vector<n_rows * n_cols, T>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
+        //row or column vectors convert to pure vectors
+        template <typename D>
+        operator vector<n_rows * n_cols, D>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
         {
             assert(cols() == 1 || rows() == 1);
             return data;
         }
     };
-    template <int n_rows, int n_cols = n_rows, typename T = float>
-    std::ostream& operator<<(std::ostream& stream, const matrix<n_rows, n_cols, T>& m){m.print(stream); return stream;}
+    template <int n_rows, int n_cols = n_rows, typename T>
+    inline std::ostream& operator<<(std::ostream& stream, const matrix<n_rows, n_cols, T>& m){m.print(stream); return stream;}
 
     template <int n_rows, int n_cols = n_rows, typename T = float>
     inline matrix<n_rows, n_cols, T> operator*(const float coeff, const matrix<n_rows, n_cols, T> m)
@@ -695,7 +724,7 @@ public:
         return m*coeff;
     }
 
-    //make this a build script
+    //make this a build script?
     template <int dim, typename T = float>
     inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals, size_t dynamicSize = 0)
     {
@@ -708,11 +737,31 @@ public:
         }, dynamicSize);
     }
 
+    inline matrix<2> get_2D_rotation(float angle)
+    {
+        return matrix<2>(
+            { cos(angle), -sin(angle),
+              sin(angle),  cos(angle)
+            });
+    }
+
+    inline matrix<2> get_2D_shear(float factor1, float factor2)
+    {
+        return matrix<2>(
+            {
+                1,     factor1,
+                factor2,     1
+            });
+    }
+    
     template <int dim, typename T = float>
     using col_vector = matrix<dim, 1, T>;
     
     template <int dim, typename T = float>
     using row_vector = matrix<1, dim, T>;
+
+    template<int nRows, int nCols, typename T>
+    using transformation = matrix<nRows, nCols, T>;
 };
 
 namespace output
@@ -774,10 +823,16 @@ namespace renderer
     {
 public:
         output::framebuffer<math::DYNAMIC> raster;
-        rasterizer(size_t width, size_t height) : raster(height, width){}
-
-        void rasterize(math::vector<2, uint> pixelLoc, output::RGB24 color)
+        rasterizer(size_t SCRwidth, size_t SCRheight, size_t worldWidth = 1, size_t worldHeight = 1) : raster(SCRheight, SCRwidth)
         {
+            WtoSCR = math::get_scale<2>({float(SCRwidth)/worldWidth, float(SCRheight)/worldHeight});
+        }
+        math::matrix<2> WtoSCR;
+        void rasterize(const math::vector<2, float>& worldLoc, const output::RGB24& color)
+        {
+            const math::vector<2, uint> pixelLoc = WtoSCR * math::col_vector<2>(worldLoc);
+            if(pixelLoc.x > raster.colorPlane.cols() || pixelLoc.y > raster.colorPlane.rows())
+                return;
             raster.colorPlane.element(pixelLoc.y, pixelLoc.x) = color;
         }
 
@@ -823,21 +878,21 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     constexpr float Wx = 30.0;
     constexpr float Wy = 30.0;
 
-    //construct screen transform 
-    matrix<2> WtoNDC = get_scale<2>({1.f/Wx, 1.f/Wy});
-    matrix<2> NDCtoSCR = get_scale<2>({wFramebuffer, hFramebuffer});
-    matrix<2> WtoSCR = NDCtoSCR * WtoNDC;
+    vector<3, float> V({1.0, 2.0, 2.0});
+    V.homogenize();
+    std::cout << V;
 
-    vector<2> scrX = WtoSCR * col_vector<2>(canonX);
-    vector<2> scrY = WtoSCR * col_vector<2>(canonY);
+    renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
-    matrix<2, 2> m1({1, 2, 3, 4});
-    m1.subview(0, 1).element(0, 0) = -2;
-    std::cout << m1;
+    auto s1 = get_scale<2>({3, 3,}) * get_2D_rotation(-12);
 
-    renderer::rasterizer R(wFramebuffer, hFramebuffer);
-    R.rasterize(scrX, RGB24(uint8_t(0)));
-    R.rasterize(scrY, RGB24(uint8_t(0)));
+    R.rasterize(canonX, RGB24({0, 0, 0}));
+    R.rasterize(canonY, RGB24({0, 0, 0}));
+
+    R.rasterize(s1 * col_vector<2>(canonX), RGB24({255, 0, 0}));
+    R.rasterize(s1 * col_vector<2>(canonY), RGB24({255, 0, 0}));
+
+
     // R.rasterize({0, 0}, {100, 0, 0});
     // R.rasterize({0, 1}, {0, 100, 0});
     // R.rasterize({1, 0}, {0, 0, 100});
