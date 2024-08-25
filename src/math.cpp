@@ -103,7 +103,7 @@ public:
             const size_t sizeConstraint = std::min(rhs.size(), this->size());
             if(rhs.ownsData == false)
             {
-                assert(this->size() == rhs.size());
+                assert(this->size() == rhs.size()); //guarantees same behaviour as normal operator=()
                 if(this->ownsData)
                     delete[] this->data;
                 this->data = rhs.data;
@@ -248,7 +248,7 @@ public:
         void overwrite_with(const list<T, size>& data, size_t fromIdx)
         {
             size_t copySize = fromIdx + data.size() > this->size() ? this->size() - fromIdx : data.size();
-            list<T, DYNAMIC> window(&this->data[fromIdx], copySize);
+            list<T, DYNAMIC> window(&this->data[fromIdx], copySize);    //pointer 
             window = data;
         }
 
@@ -335,17 +335,14 @@ public:
 
         static inline vector zero = vector(T(0));
 
-        matrix<dim, 1, T> col()
+        matrix<dim, 1, T> col()const
         {
             return matrix<dim, 1, T>(*this, this->size());
         }
-        matrix<1, dim, T> row()
+        matrix<1, dim, T> row()const
         {
             return matrix<1, dim, T>(*this, this->size());
         }
-
-        operator matrix<dim, 1  , T>()const{return col();}
-        operator matrix<1  , dim, T>()const{return row();}
 
         void print(std::ostream& stream) const
         {
@@ -534,6 +531,7 @@ public:
                 rowSize = dynamicSizeRows;
             if(n_cols == DYNAMIC)
                 colSize = dynamicSizeCols;
+            assert(list.size() == this->cols() * this->rows());
         }
         explicit matrix(T fillValue, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
         data(fillValue, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
@@ -559,6 +557,22 @@ public:
             if(n_cols == DYNAMIC)
                 colSize = dynamicSizeCols;
             assert(data.size() == this->rows() * this->cols());
+        }
+
+        void set_data(const std::initializer_list<T>& list)
+        {
+            assert(list.size() == this->cols() * this->rows());
+            this->data = vector<n_rows * n_cols, T>(list, this->rows()*this->cols());
+        }
+        void set_data(const std::initializer_list<std::initializer_list<T>>& list)
+        {
+            assert(list.size() == this->rows());
+            const auto ROWS = rows();
+            for(size_t i = 0; i < ROWS; ++i)
+            {
+                assert(list.begin()[i].size() == cols());
+                this->row(i) = list.begin()[i];
+            }
         }
 
         T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
@@ -603,6 +617,16 @@ public:
             assert(idx < rows());
             const size_t startIdx = idx * cols();
             vector<n_cols, T> result(&this->data[startIdx], cols());
+            return result;
+        }
+        inline vector<n_cols, T> row_cpy(size_t idx)const
+        {
+            assert(idx < rows());
+            const size_t startIdx = idx * cols();
+            const auto COLS = cols();
+            vector<n_cols, T> result(cols());
+            for(size_t i = 0; i < COLS; ++i)
+                result[i] = this->data(i + startIdx);
             return result;
         }
         //A vector of column elements
@@ -730,12 +754,20 @@ public:
 
             return result;
         }
+        
+        template<size_t dim>
+        requires (dim == n_cols || dim == DYNAMIC || n_cols == DYNAMIC)
+        matrix<n_rows, 1, T> operator*(const vector<dim, T>& rhs)const
+        {
+            assert(rhs.size() == this->cols());
+            return *this * rhs.col();
+        }
+        
         matrix operator*(const float coeff) const
         {
             return map([&](T value, int row, int col){return coeff*value;});
         }
 
-        //TODO implement operator= for DYNAMIC to static sized matrices
 
         [[nodiscard]]inline matrix<n_cols, n_rows, T> transpose()const
         {
@@ -764,11 +796,54 @@ public:
         } 
         
         //row or column vectors convert to pure vectors
+        //be careful of returning non-owned data 
         template <typename D>
         operator vector<n_rows * n_cols, D>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
         {
             assert(cols() == 1 || rows() == 1);
             return data;
+        }
+
+        void resize_rows(size_t nRows) requires(n_rows == DYNAMIC)
+        {
+            this->data.resize(nRows * cols());
+            this->rowSize = nRows;
+        }
+        void add_row_capacity(size_t nRows) requires(n_rows == DYNAMIC)
+        {
+            resize_rows(this->rows() + nRows);
+        }
+
+        void resize_cols(size_t nCols) requires(n_cols == DYNAMIC)
+        {
+            this->data.resize(nCols * rows());
+            this->colSize = nCols;
+        }
+        void add_col_capacity(size_t nCols) requires(n_cols == DYNAMIC)
+        {
+            resize_cols(nCols);
+        }
+
+        void resize(size_t nRows, size_t nCols) requires(n_rows == DYNAMIC && n_cols == DYNAMIC)
+        {
+            this->data.resize(nRows * nCols);
+            this->colSize = nCols;
+            this->rowSize = nRows;
+        }
+
+        template <int nRows, int nCols>
+        requires (nCols <= n_cols || nCols * n_cols == DYNAMIC)
+        void overwrite_rows_with(const matrix<nRows, nCols, T>& data, size_t startIdx)
+        {
+            assert(startIdx < this->rows());
+            assert(startIdx + data.rows() <= this->rows());
+            assert(data.cols() <= this->cols());
+            
+            const auto MINSIZE = std::min(data.rows(), this->rows() - startIdx);
+            for (size_t i = 0; i < MINSIZE; ++i)
+            {
+                this->row(i + startIdx) = data.row_cpy(i);
+            }
         }
     };
     template <int n_rows, int n_cols = n_rows, typename T>
@@ -778,6 +853,14 @@ public:
     inline matrix<n_rows, n_cols, T> operator*(const float coeff, const matrix<n_rows, n_cols, T> m)
     {
         return m*coeff;
+    }
+
+    template <int nRows, int nCols, typename T, size_t dim>
+    requires (dim == nRows || dim == DYNAMIC || nRows == DYNAMIC)
+    inline matrix<1, nCols, T> operator*(const vector<dim, T>& lhs, const matrix<nRows, nCols, T>& rhs)
+    {
+        assert(rhs.rows() == lhs.size());
+        return lhs.row() * rhs;
     }
 
     //make this a build script?
@@ -950,22 +1033,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     constexpr float Wx = 30.0;
     constexpr float Wy = 30.0;
 
-
-    matrix<2> M(
-        {
-            1, 0,
-            0, 1
-        });
-    auto homo = homogenous<3>(matrix<2>::I, {0, 0, 2}, {0, 0, 1});
-
-    vector<3> V({canonX.x, canonX.y, 1.0});
-    V = homo * V.col();
-    std::cout << V;
-    std::cout << V.homogenize();
-
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
     auto s1 = scale<2>({3, 3,}) * rotation2D(-12);
+
 
     R.rasterize(canonX, RGB24({0, 0, 0}));
     R.rasterize(canonY, RGB24({0, 0, 0}));
@@ -973,11 +1044,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     R.rasterize(s1 * col_vector<2>(canonX), RGB24({255, 0, 0}));
     R.rasterize(s1 * col_vector<2>(canonY), RGB24({255, 0, 0}));
 
-
-    // R.rasterize({0, 0}, {100, 0, 0});
-    // R.rasterize({0, 1}, {0, 100, 0});
-    // R.rasterize({1, 0}, {0, 0, 100});
-    // R.rasterize({1, 1}, {0, 0, 0});
 
     window.write_frame(R.get_framebuffer(vector<2, uint>({wWindow, hWindow})));
 
