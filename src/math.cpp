@@ -98,6 +98,7 @@ public:
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
         template<size_t size>
+        requires (dim >= size || dim * size == DYNAMIC)
         list& operator=(const list<T, size>& rhs)
         {
             assert(this->size() >= rhs.size());
@@ -142,6 +143,7 @@ public:
         }
         
         template<size_t size>
+        requires (dim >= size || dim * size == DYNAMIC)
         list(const list<T, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
@@ -202,7 +204,7 @@ public:
             return *this;
         }
         template <typename D>
-        [[nodiscard]]D reduce(reduction<D> fnc, D initial = D(0)) const
+        [[nodiscard]] D reduce(reduction<D> fnc, D initial = D(0)) const
         {
             D result = initial;
             for(size_t i = 0; i < size(); ++i)
@@ -211,12 +213,29 @@ public:
         }
 
         template<size_t size = DYNAMIC> //too much of a hassle to make this return non-DYNAMIC
-        list<T, DYNAMIC> join(const list<T, size>& other)
+        [[nodiscard]] list<T, DYNAMIC> join(const list<T, size>& other)
         {
             list<T, DYNAMIC> jointList(this->size() + other.size());
             std::copy(this->data, this->data + this->size(), jointList.data);
             std::copy(other.data, other.data + other.size(), jointList.data + this->size());
             return jointList;
+        }
+
+        template<size_t firstSize = DYNAMIC, size_t...sizes>
+        [[nodiscard]] static list<T, DYNAMIC> join(const list<T, firstSize>& first, const list<T, sizes>&...lists)
+        {
+            size_t totalSize = 0;
+            ([&]{totalSize += lists.size();}(), ...);
+            list<T> result(totalSize);
+            
+            size_t sizeSoFar = 0;
+            ([&]
+            {
+                std::copy(lists.data, lists.data + lists.size(), result.data + sizeSoFar);
+                sizeSoFar += lists.size();
+            }(), ...);
+
+            return result;
         }
 
         template<typename D>
@@ -300,6 +319,7 @@ public:
         using list<T, dim>::list;
 
         template<size_t size>
+        requires (dim >= size || dim * size == DYNAMIC)
         vector& operator=(const vector<size, T>& other)
         {
             list<T, dim>::operator=(other);
@@ -319,6 +339,12 @@ public:
         vector(const vector& other) : list<T, dim>(other){}
         
         vector(const list<T, dim>& other) : list<T, dim>(other){}
+
+        template<size_t size = DYNAMIC> //vector version for some reason
+        vector<DYNAMIC, T> join(const list<T, size>& other)
+        {
+            return vector<DYNAMIC, T>(list<T, dim>::join(other));
+        }
 
         template <typename D>
         operator vector<dim, D>const()
@@ -1038,13 +1064,17 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     constexpr float Wx = 30.0;
     constexpr float Wy = 30.0;
 
+    std::cout << canonX.join({-1});
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
     matrix<3> S;
     auto s1 = scale<2>({3, 3,}) * rotation2D(-12);
     S = homogenous<3>(s1, {0, 0, 1}, {0, 0, 1});
 
-    R.rasterize(canonX, RGB24({0, 0, 0}));
+    list<float>::join(canonX, list({-1.f, -2.f}), list({-5.f})).for_each([](float v, size_t i)
+    {std::cout << v << ' ';});
+
+    R.rasterize(s1 * canonX, RGB24({0, 0, 0}));
     R.rasterize(canonY, RGB24({0, 0, 0}));
 
     R.rasterize(s1 * col_vector<2>(canonX), RGB24({255, 0, 0}));
