@@ -75,7 +75,7 @@ public:
         }
         //return subset of list starting from fromIdx, to and excluding toIdx, such that fromIdx = 0,
         //toIdx = size() will return a copy of the entire list.
-        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)
+        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)const
         {
             assert (fromIdx <= toIdx && toIdx <= size());
             if(fromIdx == toIdx)
@@ -87,7 +87,7 @@ public:
             }, result);
             return result;
         }
-        list<T, DYNAMIC> offset(size_t x){return (*this)(x, size());}
+        list<T, DYNAMIC> offset(size_t x)const{return (*this)(x, size());}
         
         //BEWARE! Mutable
         inline T& last()
@@ -100,7 +100,8 @@ public:
         template<size_t size>
         list& operator=(const list<T, size>& rhs)
         {
-            const size_t sizeConstraint = std::min(rhs.size(), this->size());
+            assert(this->size() >= rhs.size());
+            // const size_t sizeConstraint = std::min(rhs.size(), this->size());
             if(rhs.ownsData == false)
             {
                 assert(this->size() == rhs.size()); //guarantees same behaviour as normal operator=()
@@ -110,7 +111,7 @@ public:
                 this->ownsData = false;
             }
             else
-                for(size_t i = 0; i < sizeConstraint; ++i)
+                for(size_t i = 0; i < rhs.size(); ++i)
                     this->data[i] = rhs.data[i];
             return *this;
         }
@@ -174,14 +175,6 @@ public:
                 this->data[i] = fillValue;
         }
 
-        template <size_t size> 
-        requires (size < dim || dim * size == DYNAMIC)
-        list(const std::initializer_list<T>& data, list<T, size> smallerList)
-        {
-            assert(data.size() == this->size() - smallerList.size());
-            
-        }
-
         static void create(builder fnc, list& out)
         {
             for(size_t i = 0; i < out.size(); ++i)
@@ -217,6 +210,15 @@ public:
             return result;
         }
 
+        template<size_t size = DYNAMIC> //too much of a hassle to make this return non-DYNAMIC
+        list<T, DYNAMIC> join(const list<T, size>& other)
+        {
+            list<T, DYNAMIC> jointList(this->size() + other.size());
+            std::copy(this->data, this->data + this->size(), jointList.data);
+            std::copy(other.data, other.data + other.size(), jointList.data + this->size());
+            return jointList;
+        }
+
         template<typename D>
         operator list<D, dim>const()
         {
@@ -225,14 +227,6 @@ public:
             {
                 return static_cast<D>(this->data[idx]);
             }, result);
-            return result;
-        }
-
-        operator std::initializer_list<T>const()
-        {
-            std::initializer_list<T> result;
-            result._M_len = this->size();
-            result._M_array = this->data;
             return result;
         }
 
@@ -344,16 +338,16 @@ public:
 
         static inline vector zero = vector(T(0));
 
-        matrix<dim, 1, T> col()const
+        inline matrix<dim, 1, T> col()const
         {
             return matrix<dim, 1, T>(*this, this->size());
         }
-        matrix<1, dim, T> row()const
+        inline matrix<1, dim, T> row()const
         {
             return matrix<1, dim, T>(*this, this->size());
         }
 
-        void print(std::ostream& stream) const
+        inline void print(std::ostream& stream) const
         {
             stream << "{";
             this->for_each([&](T value, size_t idx)
@@ -365,7 +359,7 @@ public:
             stream << "}";
         }
 
-        vector operator+ (const vector& rhs) const
+        inline vector operator+ (const vector& rhs) const
         {
             const vector& lhs = *this;
             return create([lhs, &rhs](size_t idx)
@@ -373,33 +367,33 @@ public:
                 return lhs[idx] + rhs[idx];
             });
         }
-        T operator*(const vector& rhs) const
+        inline T operator*(const vector& rhs) const
         {
             return reduce<T>([&rhs](T val, size_t idx, T prev)
             {
                 return prev + val*rhs[idx];
             });
         }
-        vector operator-()const
+        inline vector operator-()const
         {
             return map([](T value, size_t idx)
             {
                 return -value;
             });
         }
-        vector operator-(const vector& rhs)const
+        inline vector operator-(const vector& rhs)const
         {
             const vector& lhs = *this;
             return lhs + (-rhs);
         }
-        vector operator* (float coeff)const
+        inline vector operator* (float coeff)const
         {
             return this->map([&coeff](T val, size_t idx) -> T
             {
                 return val * coeff;
             });
         }
-        T magnitude() const
+        inline T magnitude() const
         {
             return sqrt((*this) * (*this));
         }
