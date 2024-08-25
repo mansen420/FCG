@@ -159,18 +159,27 @@ public:
             if(dim == DYNAMIC)
                 this->dynamicSize = dynamicSize;
         }
-        list(const std::initializer_list<T>& list, const size_t dynamicSize = 0) : list::list(dynamicSize)
+        list(const std::initializer_list<T>& list) : list::list(list.size())
         {
             if(dim == DYNAMIC)
                 this->dynamicSize = list.size();
             else
                 assert(list.size() == dim);
+                
             std::copy(list.begin(), list.end(), this->data);
         }
         explicit list(const T fillValue, const size_t dynamicSize = 0) : list(dynamicSize)
         {
             for(size_t i = 0; i < size(); ++i)
                 this->data[i] = fillValue;
+        }
+
+        template <size_t size> 
+        requires (size < dim || dim * size == DYNAMIC)
+        list(const std::initializer_list<T>& data, list<T, size> smallerList)
+        {
+            assert(data.size() == this->size() - smallerList.size());
+            
         }
 
         static void create(builder fnc, list& out)
@@ -525,7 +534,7 @@ public:
                 colSize = dynamicSizeCols;
         }
         explicit matrix(const std::initializer_list<T>& list, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
-        data(list, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
+        data(list)
         {
             if(n_rows == DYNAMIC)
                 rowSize = dynamicSizeRows;
@@ -896,6 +905,8 @@ public:
     template<int dim>
     [[nodiscard]]inline matrix<dim> homogenous(matrix<dim - 1> innerMatrix, vector<dim> bottomRow, vector<dim> rightCol, size_t dynamicSize = 0)
     {
+        assert(bottomRow(dim - 1) == rightCol(dim - 1));
+
         matrix<dim> result(dynamicSize);
         matrix<dim>::create([&](int row, int col) -> float
         {
@@ -1035,8 +1046,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
+    matrix<3> S;
     auto s1 = scale<2>({3, 3,}) * rotation2D(-12);
-
+    S = homogenous<3>(s1, {0, 0, 1}, {0, 0, 1});
 
     R.rasterize(canonX, RGB24({0, 0, 0}));
     R.rasterize(canonY, RGB24({0, 0, 0}));
