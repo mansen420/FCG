@@ -77,7 +77,7 @@ public:
         //toIdx = size() will return a copy of the entire list.
         list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)
         {
-            assert (fromIdx <= toIdx && toIdx < size());
+            assert (fromIdx <= toIdx && toIdx <= size());
             if(fromIdx == toIdx)
                 return list<T>();
             list<T, DYNAMIC> result(toIdx - fromIdx);
@@ -89,7 +89,8 @@ public:
         }
         list<T, DYNAMIC> offset(size_t x){return (*this)(x, size());}
         
-        inline T last()
+        //BEWARE! Mutable
+        inline T& last()
         {
             assert(this->size() > 0);
             return this->data[this->size() - 1];
@@ -138,6 +139,9 @@ public:
             std::copy(data.begin(), data.end(), this->data);
             return *this;
         }
+        
+        template<size_t size>
+        list(const list<T, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
         explicit list(const size_t dynamicSize = 0)
@@ -168,7 +172,6 @@ public:
             for(size_t i = 0; i < size(); ++i)
                 this->data[i] = fillValue;
         }
-
 
         static void create(builder fnc, list& out)
         {
@@ -216,6 +219,14 @@ public:
             return result;
         }
 
+        operator std::initializer_list<T>const()
+        {
+            std::initializer_list<T> result;
+            result._M_len = this->size();
+            result._M_array = this->data;
+            return result;
+        }
+
         template<size_t size = DYNAMIC>
         void insert(const list<T, size>& data, size_t fromIdx)
         {
@@ -226,6 +237,11 @@ public:
             this->overwrite_with(data, fromIdx);
 
             this->overwrite_with(pushedData, fromIdx + data.size());
+        }
+        template<size_t size = DYNAMIC>
+        void push(const list<T, size>& data)
+        {
+            insert(data, this->size() - 1);
         }
         //If data.size() + fromIdx > size() then data will be truncated to fit into size() - fromIdx
         template<size_t size = DYNAMIC>
@@ -251,6 +267,16 @@ public:
             this->dynamicSize = newSize;
         }
 
+        //returns deep copy of list, regardless of data ownership.
+        list copy() const
+        {
+            const auto SIZE = this->size();
+            list result(this->size());
+            for(size_t i = 0; i < SIZE; ++i)
+                result[i] = this[i];
+            return result;
+        }
+        
         virtual ~list() = default;
     };
 
@@ -284,7 +310,11 @@ public:
             return *this;
         };
 
+        template<size_t size>
+        vector(const vector<size, T>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
+        
         vector(const vector& other) : list<T, dim>(other){}
+        
         vector(const list<T, dim>& other) : list<T, dim>(other){}
 
         template <typename D>
@@ -304,6 +334,18 @@ public:
         const T& a = w;
 
         static inline vector zero = vector(T(0));
+
+        matrix<dim, 1, T> col()
+        {
+            return matrix<dim, 1, T>(*this, this->size());
+        }
+        matrix<1, dim, T> row()
+        {
+            return matrix<1, dim, T>(*this, this->size());
+        }
+
+        operator matrix<dim, 1  , T>const(){return col();}
+        operator matrix<1  , dim, T>const(){return row();}
 
         void print(std::ostream& stream) const
         {
@@ -466,6 +508,17 @@ public:
             return *this;
         }
         
+        template<size_t nRows, size_t nCols>
+        requires (nRows == DYNAMIC || nRows == n_rows && nCols == DYNAMIC || nCols == n_cols)
+        matrix& operator=(const matrix<nRows, nCols, T>& other)
+        {
+            assert(other.rows() == this->rows() && other.cols() == this->cols());
+            if(this == &other)
+                return *this;
+            this->data = other.data;
+            return *this;
+        }
+
         explicit matrix(size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
         data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
         {
@@ -505,6 +558,7 @@ public:
                 rowSize = dynamicSizeRows;
             if(n_cols == DYNAMIC)
                 colSize = dynamicSizeCols;
+            assert(data.size() == this->rows() * this->cols());
         }
 
         T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
@@ -543,23 +597,15 @@ public:
         const static inline matrix<n_rows, n_cols, T> zero = matrix(T(0));
         const static inline matrix<n_rows, n_cols, T> I = matrix::get_identity();
 
-        //BEWARE! modifying this vector will mutate the matrix. Use row_copy() instead.
+        //BEWARE! modifying this vector will mutate the matrix. Use vector::copy for a deep copy.
         inline vector<n_cols, T> row(size_t idx)
         {
             assert(idx < rows());
-            const size_t startIdx = idx*cols();
+            const size_t startIdx = idx * cols();
             vector<n_cols, T> result(&this->data[startIdx], cols());
             return result;
         }
-        inline vector<n_cols, T> row_copy(size_t idx) const
-        {
-            assert(idx < rows());
-            const size_t startIdx = idx*cols();
-            vector<n_cols, T> result(cols());
-            for(size_t i = 0; i < cols(); ++i)
-                result[i] = this->data(startIdx + i);
-            return result;
-        }
+        //A vector of column elements
         inline vector<n_rows, T> col(size_t idx)const
         {
             assert(idx < cols());
@@ -580,7 +626,7 @@ public:
         void for_each_row(const std::function<void(const vector<n_cols, T>& row, size_t idx)>& action)const
         {
             for(size_t i = 0; i < rows(); ++i)
-                action(row_copy(i), i);
+                action(row(i).copy(), i);
         }
             
         template<size_t dim>
@@ -706,6 +752,15 @@ public:
                 return value == T(0) ? value : 1.0/value; 
             });
         }
+
+        //Returns deep copy of matrix. Especially useful when you want to copy a subview()
+        matrix copy()
+        {
+            return this->map_rows([](const vector<n_cols, T>& row, size_t idx)
+            {
+                return row.copy();
+            });
+        } 
         
         //row or column vectors convert to pure vectors
         template <typename D>
@@ -726,7 +781,7 @@ public:
 
     //make this a build script?
     template <int dim, typename T = float>
-    inline matrix<dim, dim, T> get_scale(std::array<T, dim> diagonals, size_t dynamicSize = 0)
+    [[nodiscard]]inline matrix<dim, dim, T> scale(std::array<T, dim> diagonals, size_t dynamicSize = 0)
     {
         return matrix<dim, dim, T>([&](int row, int col)
         {
@@ -737,7 +792,7 @@ public:
         }, dynamicSize);
     }
 
-    inline matrix<2> get_2D_rotation(float angle)
+    [[nodiscard]]inline matrix<2> rotation2D(float angle)
     {
         return matrix<2>(
             { cos(angle), -sin(angle),
@@ -745,7 +800,7 @@ public:
             });
     }
 
-    inline matrix<2> get_2D_shear(float factor1, float factor2)
+    [[nodiscard]]inline matrix<2> shear2D(float factor1, float factor2)
     {
         return matrix<2>(
             {
@@ -754,6 +809,22 @@ public:
             });
     }
     
+    template<int dim>
+    [[nodiscard]]inline matrix<dim> homogenous(matrix<dim - 1> innerMatrix, vector<dim> bottomRow, vector<dim> rightCol, size_t dynamicSize = 0)
+    {
+        matrix<dim> result(dynamicSize);
+        matrix<dim>::create([&](int row, int col) -> float
+        {
+            if (row == dim - 1)
+                return bottomRow(col);
+            if (col == dim - 1)
+                return rightCol(row);
+            
+            return innerMatrix(row, col);
+        }, result);
+        return result;
+    }
+
     template <int dim, typename T = float>
     using col_vector = matrix<dim, 1, T>;
     
@@ -825,7 +896,7 @@ public:
         output::framebuffer<math::DYNAMIC> raster;
         rasterizer(size_t SCRwidth, size_t SCRheight, size_t worldWidth = 1, size_t worldHeight = 1) : raster(SCRheight, SCRwidth)
         {
-            WtoSCR = math::get_scale<2>({float(SCRwidth)/worldWidth, float(SCRheight)/worldHeight});
+            WtoSCR = math::scale<2>({float(SCRwidth)/worldWidth, float(SCRheight)/worldHeight});
         }
         math::matrix<2> WtoSCR;
         void rasterize(const math::vector<2, float>& worldLoc, const output::RGB24& color)
@@ -878,13 +949,22 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     constexpr float Wx = 30.0;
     constexpr float Wy = 30.0;
 
-    vector<3, float> V({1.0, 2.0, 2.0});
-    V.homogenize();
-    std::cout << V;
+
+    matrix<2> M(
+        {
+            1, 0,
+            0, 1
+        });
+    auto homo = homogenous<3>(M, {0,0,1}, {0,0,1});
+
+    vector<3> V(canonX);
+    V.last() = 1.0;
+    vector<3> res = homo * V.col();
+    std::cout << res.x;
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
-    auto s1 = get_scale<2>({3, 3,}) * get_2D_rotation(-12);
+    auto s1 = scale<2>({3, 3,}) * rotation2D(-12);
 
     R.rasterize(canonX, RGB24({0, 0, 0}));
     R.rasterize(canonY, RGB24({0, 0, 0}));
