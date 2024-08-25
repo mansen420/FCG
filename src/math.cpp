@@ -344,8 +344,8 @@ public:
             return matrix<1, dim, T>(*this, this->size());
         }
 
-        operator matrix<dim, 1  , T>const(){return col();}
-        operator matrix<1  , dim, T>const(){return row();}
+        operator matrix<dim, 1  , T>()const{return col();}
+        operator matrix<1  , dim, T>()const{return row();}
 
         void print(std::ostream& stream) const
         {
@@ -709,6 +709,7 @@ public:
         }
 
         template <int nr_rows, int nr_cols>
+        requires (nr_rows == n_cols || nr_rows == DYNAMIC)
         matrix<n_rows, nr_cols> operator*(const matrix<nr_rows, nr_cols, T> rhs) const
         {
             const matrix& lhs = (*this);
@@ -955,12 +956,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
             1, 0,
             0, 1
         });
-    auto homo = homogenous<3>(M, {0,0,1}, {0,0,1});
+    auto homo = homogenous<3>(matrix<2>::I, {0, 0, 2}, {0, 0, 1});
 
-    vector<3> V(canonX);
-    V.last() = 1.0;
-    vector<3> res = homo * V.col();
-    std::cout << res.x;
+    vector<3> V({canonX.x, canonX.y, 1.0});
+    V = homo * V.col();
+    std::cout << V;
+    std::cout << V.homogenize();
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
