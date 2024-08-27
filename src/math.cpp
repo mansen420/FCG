@@ -12,6 +12,8 @@
 #include <sstream>
 #include <exception>
 
+#include <concepts>
+
 #include "SDL.h"
 
 namespace math
@@ -38,6 +40,9 @@ public:
         empty& operator=(size_t){return *this;}
         operator size_t()const{return size_t(0);}
     };
+           
+    template <size_t dim, typename T>
+    class vector;
 
     template <typename T, size_t dim = DYNAMIC>
     requires (dim >= 0)
@@ -97,9 +102,9 @@ public:
         }
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
-        template<size_t size>
-        requires (dim >= size || dim * size == DYNAMIC)
-        list& operator=(const list<T, size>& rhs)
+        template<size_t size, typename D>
+        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        list& operator=(const list<D, size>& rhs)
         {
             assert(this->size() >= rhs.size());
             // const size_t sizeConstraint = std::min(rhs.size(), this->size());
@@ -108,7 +113,7 @@ public:
                 assert(this->size() == rhs.size()); //guarantees same behaviour as normal operator=()
                 if(this->ownsData)
                     delete[] this->data;
-                this->data = rhs.data;
+                this->data = (T*)rhs.data;
                 this->ownsData = false;
             }
             else
@@ -142,9 +147,9 @@ public:
             return *this;
         }
         
-        template<size_t size>
-        requires (dim >= size || dim * size == DYNAMIC)
-        list(const list<T, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
+        template<size_t size, typename D>
+        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        explicit list(const list<D, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
         explicit list(const size_t dynamicSize = 0)
@@ -176,6 +181,14 @@ public:
             for(size_t i = 0; i < size(); ++i)
                 this->data[i] = fillValue;
         }
+        
+        template <typename... types>
+        requires((std::is_convertible_v<types, T> &&...))
+        list(types... args) requires(sizeof...(args) == dim || dim == DYNAMIC) : list(sizeof...(args))
+        {
+            size_t i = 0;
+            ([&]{this->data[i++] = args;}(), ...);
+        }
 
         static void create(builder fnc, list& out)
         {
@@ -191,7 +204,7 @@ public:
             }, result);
             return result;
         }
-        list mutate(mutation fnc)
+        list& mutate(mutation fnc)
         {
             for(size_t i = 0; i < size(); ++i)
                 fnc(this->data[i], i);
@@ -212,17 +225,18 @@ public:
             return result;
         }
 
-        template<size_t size = DYNAMIC> //too much of a hassle to make this return non-DYNAMIC
-        [[nodiscard]] list<T, DYNAMIC> join(const list<T, size>& other)
+        template<size_t size = DYNAMIC>
+        [[nodiscard]] list<T, size * dim == DYNAMIC ? DYNAMIC : size + dim> join(const list<T, size>& other) const
         {
-            list<T, DYNAMIC> jointList(this->size() + other.size());
+            list<T, size * dim == DYNAMIC ? DYNAMIC : size + dim> jointList(this->size() + other.size());
             std::copy(this->data, this->data + this->size(), jointList.data);
             std::copy(other.data, other.data + other.size(), jointList.data + this->size());
             return jointList;
         }
 
-        template<size_t firstSize = DYNAMIC, size_t...sizes>
-        [[nodiscard]] static list<T, DYNAMIC> join(const list<T, firstSize>& first, const list<T, sizes>&...lists)
+        template<size_t...sizes, typename...types> //TODO make this return compile time sizes!
+        requires(std::is_convertible_v<types, T> && ...)
+        [[nodiscard]] static list<T, DYNAMIC> join(const list<types, sizes>&...lists)
         {
             size_t totalSize = 0;
             ([&]{totalSize += lists.size();}(), ...);
@@ -232,6 +246,24 @@ public:
             ([&]
             {
                 std::copy(lists.data, lists.data + lists.size(), result.data + sizeSoFar);
+                sizeSoFar += lists.size();
+            }(), ...);
+
+            return result;
+        }
+
+        template<typename...types>
+        requires(std::is_convertible_v<types, T> && ...)
+        [[nodiscard]] static list<T, DYNAMIC> join(const std::initializer_list<types>...lists)
+        {
+            size_t totalSize = 0;
+            ([&]{totalSize += lists.size();}(), ...);
+            list<T> result(totalSize);
+            
+            size_t sizeSoFar = 0;
+            ([&]
+            {
+                std::copy(lists.begin(), lists.end() + lists.size(), result.data + sizeSoFar);
                 sizeSoFar += lists.size();
             }(), ...);
 
@@ -308,7 +340,6 @@ public:
 
     //Pure vector class
     template <size_t dim = DYNAMIC, typename T = float>
-    requires (dim >= 0)
     class vector : public list<T, dim>
     {
 protected:
@@ -333,24 +364,17 @@ public:
             return *this;
         };
 
-        template<size_t size>
-        vector(const vector<size, T>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
+        template<size_t size, typename D>
+        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        explicit vector(const vector<size, D>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
         
         vector(const vector& other) : list<T, dim>(other){}
         
         vector(const list<T, dim>& other) : list<T, dim>(other){}
 
-        template<size_t size = DYNAMIC> //vector version for some reason
-        vector<DYNAMIC, T> join(const list<T, size>& other)
-        {
-            return vector<DYNAMIC, T>(list<T, dim>::join(other));
-        }
-
-        template <typename D>
-        operator vector<dim, D>const()
-        {
-            return list<T, dim>::operator const math::list<D, dim>();
-        }
+        template<size_t size, typename D>
+        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        vector(const list<D, size>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
 
         const T& x = this->data[0];
         const T& y = this->data[1];
@@ -364,11 +388,11 @@ public:
 
         static inline vector zero = vector(T(0));
 
-        inline matrix<dim, 1, T> col()const
+        [[nodiscard]] inline matrix<dim, 1, T> col()const
         {
             return matrix<dim, 1, T>(*this, this->size());
         }
-        inline matrix<1, dim, T> row()const
+        [[nodiscard]] inline matrix<1, dim, T> row()const
         {
             return matrix<1, dim, T>(*this, this->size());
         }
@@ -419,7 +443,11 @@ public:
                 return val * coeff;
             });
         }
-        inline T magnitude() const
+        inline vector operator/(float coeff)const
+        {
+            return this->map([&coeff](T val, size_t idx){return val/coeff;});
+        }
+        [[nodiscard]] inline T magnitude() const
         {
             return sqrt((*this) * (*this));
         }
@@ -432,7 +460,7 @@ public:
                 return prev && (value == rhs[idx]);
             }, true);
         }
-        inline vector direction() const
+        [[nodiscard]] inline vector direction() const
         {
             if(*this == zero)
                 return zero;
@@ -443,20 +471,23 @@ public:
             *this = this->direction();
             return *this;
         }
-        inline vector& homogenize()
+        inline vector& homogenize() requires(dim > 1)
         {
             if(this->last() == T(0))
                 return *this;
-            this->mutate([this](T& val, size_t idx) -> void
-            {
-                val = val / this->last();
-            });
+            this->mutate([this](T& val, size_t){ val = val / this->last();});
             return *this;
+        }
+        [[nodiscard]] T sum()
+        {
+            return reduce<T>([](T val, size_t idx, T prev)->T
+            {
+                return prev + val;
+            });
         }
     };
     template <size_t dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
-    
     
     template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
@@ -606,7 +637,6 @@ public:
 
         T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
 
-
         [[nodiscard]]inline matrix map(Fmapping mapping) const
         {
             matrix<n_rows, n_cols, T> result(rows(), cols());
@@ -714,10 +744,10 @@ public:
 
         //Returns reference to submatrix. Allows mutation! 
         //TODO add copy() method
-        matrix<DYNAMIC, DYNAMIC, T> subview(size_t fromIdx, size_t nRows)
+        matrix<DYNAMIC, n_cols, T> subview(size_t fromIdx, size_t nRows)
         {
             vector<DYNAMIC, T> dataWindow(&this->data[fromIdx * this->cols()], nRows * this->cols());
-            return matrix<DYNAMIC, DYNAMIC, T>(dataWindow, nRows, this->cols());
+            return matrix<DYNAMIC, n_cols, T>(dataWindow, nRows, this->cols());
         }
 
         T& element(size_t r, size_t c)
@@ -786,7 +816,7 @@ public:
         
         template<size_t dim>
         requires (dim == n_cols || dim == DYNAMIC || n_cols == DYNAMIC)
-        matrix<n_rows, 1, T> operator*(const vector<dim, T>& rhs)const
+        matrix<n_rows, 1, T> operator*(const vector<dim, T>& rhs) const
         {
             assert(rhs.size() == this->cols());
             return *this * rhs.col();
@@ -796,7 +826,6 @@ public:
         {
             return map([&](T value, int row, int col){return coeff*value;});
         }
-
 
         [[nodiscard]]inline matrix<n_cols, n_rows, T> transpose()const
         {
@@ -826,8 +855,9 @@ public:
         
         //row or column vectors convert to pure vectors
         //be careful of returning non-owned data 
-        template <typename D>
-        operator vector<n_rows * n_cols, D>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
+        template <size_t dim, typename D>
+        requires(dim == n_cols || dim == n_rows || dim * n_rows * n_cols == DYNAMIC)
+        operator vector<dim, D>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
         {
             assert(cols() == 1 || rows() == 1);
             return data;
@@ -884,6 +914,7 @@ public:
         return m*coeff;
     }
 
+
     template <int nRows, int nCols, typename T, size_t dim>
     requires (dim == nRows || dim == DYNAMIC || nRows == DYNAMIC)
     inline matrix<1, nCols, T> operator*(const vector<dim, T>& lhs, const matrix<nRows, nCols, T>& rhs)
@@ -894,7 +925,7 @@ public:
 
     //make this a build script?
     template <int dim, typename T = float>
-    [[nodiscard]]inline matrix<dim, dim, T> scale(std::array<T, dim> diagonals, size_t dynamicSize = 0)
+    [[nodiscard]]inline matrix<dim, dim, T> scale(vector<dim, T> diagonals, size_t dynamicSize = 0)
     {
         return matrix<dim, dim, T>([&](int row, int col)
         {
@@ -923,7 +954,7 @@ public:
     }
     
     template<int dim>
-    [[nodiscard]]inline matrix<dim> homogenous(matrix<dim - 1> innerMatrix, vector<dim> bottomRow, vector<dim> rightCol, size_t dynamicSize = 0)
+    [[nodiscard]]inline matrix<dim> homogeneous(matrix<dim - 1> innerMatrix, vector<dim> bottomRow, vector<dim> rightCol, size_t dynamicSize = 0)
     {
         assert(bottomRow(dim - 1) == rightCol(dim - 1));
 
@@ -948,7 +979,12 @@ public:
 
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
+
+    typedef vector<3, float> vec3;
+    typedef vector<3, int> vec3i;
+    typedef vector<3, unsigned int> vec3u;
 };
+
 
 namespace output
 {
@@ -1003,20 +1039,35 @@ public:
     };
 };
 
+//TODO this class is temporary as fuck
 namespace renderer
 {
     class rasterizer
     {
 public:
         output::framebuffer<math::DYNAMIC> raster;
-        rasterizer(size_t SCRwidth, size_t SCRheight, size_t worldWidth = 1, size_t worldHeight = 1) : raster(SCRheight, SCRwidth)
+        rasterizer(size_t SCRwidth, size_t SCRheight, math::vector<2> worldXCoords, math::vector<2> worldYCoords) : raster(SCRheight, SCRwidth)
         {
-            WtoSCR = math::scale<2>({float(SCRwidth)/worldWidth, float(SCRheight)/worldHeight});
+            const auto width = worldXCoords[1] - worldXCoords[0];
+            const auto height = worldYCoords[1] - worldYCoords[0];
+            const auto midX = worldXCoords.sum()/2;
+            const auto midY = worldYCoords.sum()/2;
+
+            WtoSCR = math::homogeneous<3>(math::matrix<2>::I, {0, 0, 1}, {-midX, -midY, 1});
+            WtoSCR = WtoSCR * math::homogeneous<3>(math::scale<2>({float(SCRwidth)/(width),
+            float(SCRheight)/(height)}), {0, 0, 1}, {0, 0, 1});
         }
-        math::matrix<2> WtoSCR;
+        math::matrix<3> WtoSCR;
         void rasterize(const math::vector<2, float>& worldLoc, const output::RGB24& color)
         {
-            const math::vector<2, uint> pixelLoc = WtoSCR * math::col_vector<2>(worldLoc);
+            //TODO this conversion is causing overflow.
+            //TODO implement submatrix()
+            //XXX this is UGLY. solution : 1.use short typenames, 2. fix the fuck out of join()
+            //might be better to let go of std::initializer_list for variadic ctors tbh
+            math::vector<3, uint> pixelLoc = WtoSCR * math::vector<3, float>(math::list<float, 3>::join(worldLoc, math::list({1.f})));
+            std::cout << WtoSCR << '\n';
+            std::cout << pixelLoc;
+            std::cout << worldLoc << ' ' << pixelLoc;
             if(pixelLoc.x > raster.colorPlane.cols() || pixelLoc.y > raster.colorPlane.rows())
                 return;
             raster.colorPlane.element(pixelLoc.y, pixelLoc.x) = color;
@@ -1057,29 +1108,12 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     window window("title", 200, 200, wWindow, hWindow);
 
-    //scene
-    vector<2> canonY = {0, 1};
-    vector<2> canonX = {1, 0};
+    const vector<2> Wx(0.f, 1.f);
+    const vector<2> Wy(0.f, 1.f);
 
-    constexpr float Wx = 30.0;
-    constexpr float Wy = 30.0;
-
-    std::cout << canonX.join({-1});
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
-    matrix<3> S;
-    auto s1 = scale<2>({3, 3,}) * rotation2D(-12);
-    S = homogenous<3>(s1, {0, 0, 1}, {0, 0, 1});
-
-    list<float>::join(canonX, list({-1.f, -2.f}), list({-5.f})).for_each([](float v, size_t i)
-    {std::cout << v << ' ';});
-
-    R.rasterize(s1 * canonX, RGB24({0, 0, 0}));
-    R.rasterize(canonY, RGB24({0, 0, 0}));
-
-    R.rasterize(s1 * col_vector<2>(canonX), RGB24({255, 0, 0}));
-    R.rasterize(s1 * col_vector<2>(canonY), RGB24({255, 0, 0}));
-
+    R.rasterize({0.5, 0.5}, {255, 0, 0});
 
     window.write_frame(R.get_framebuffer(vector<2, uint>({wWindow, hWindow})));
 
