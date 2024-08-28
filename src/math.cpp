@@ -1023,10 +1023,25 @@ public:
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
 
+    typedef vector<4, float>        vec4;
+    typedef vector<4, double>       vec4d;
+    typedef vector<4, int>          vec4i;
+    typedef vector<4, unsigned int> vec4u;
+
     typedef vector<3, float>        vec3;
     typedef vector<3, double>       vec3d;
     typedef vector<3, int>          vec3i;
     typedef vector<3, unsigned int> vec3u;
+
+    typedef vector<2, float>        vec2;
+    typedef vector<2, double>       vec2d;
+    typedef vector<2, int>          vec2i;
+    typedef vector<2, unsigned int> vec2u;
+
+    typedef vector<1, float>        vec1;
+    typedef vector<1, double>       vec1d;
+    typedef vector<1, int>          vec1i;
+    typedef vector<1, unsigned int> vec1u;
 
     typedef matrix<4> mat4;
     typedef matrix<3> mat3;
@@ -1035,6 +1050,9 @@ public:
     typedef matrix<4, 4, int> mat4i;
     typedef matrix<3, 3, int> mat3i;
     typedef matrix<2, 2, int> mat2i;
+
+    template <size_t dim, typename T>
+    using vec = vector<dim, T>;
 };
 
 namespace output
@@ -1163,13 +1181,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     const vector<2> Wx(0.f, 1.f);
     const vector<2> Wy(0.f, 1.f);
 
-    std::cout << vec3(1.f, 2.f, 3.f);
-    // std::cout << vector(1.f, 2.f, 3.f);
-    //std::cout << math::vector<3, float>();
-    
+    std::cout << vec(1, 2, 4);
+
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
-    R.rasterize({0.5, 0.5}, {255, 0, 0});
+    R.rasterize(vec2(0.5f, 0.5f), RGB24(255, 0, 0));
 
     window.write_frame(R.get_framebuffer(vector<2, uint>({wWindow, hWindow})));
 
