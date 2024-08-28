@@ -152,21 +152,19 @@ public:
         explicit list(const list<D, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
         list(const list& copy) : list(copy.size()) {*this = copy;}
 
-        explicit list(const size_t dynamicSize = 0)
+        explicit list() requires (dim != DYNAMIC)
         {
-            if(dim == DYNAMIC)
-            {
-                this->dynamicSize = dynamicSize;
-                this->data = new T[dynamicSize];
-                return;
-            }
             this->data = new T[dim];
         }
-        explicit list(T* const data, const size_t dynamicSize = 0) : basic_aggregate<T>(data)
+        explicit list(const size_t dynamicSize) requires(dim == DYNAMIC)
         {
-            if(dim == DYNAMIC)
-                this->dynamicSize = dynamicSize;
+            this->dynamicSize = dynamicSize;
+            this->data = new T[dynamicSize];
         }
+        
+        explicit list(T* const data, const size_t dynamicSize = 0)  requires(dim != DYNAMIC) : basic_aggregate<T>(data){}
+        explicit list(T* const data, const size_t dynamicSize) requires(dim == DYNAMIC) : basic_aggregate<T>(data), dynamicSize(dynamicSize){}
+        
         list(const std::initializer_list<T>& list) : list::list(list.size())
         {
             if(dim == DYNAMIC)
@@ -176,12 +174,18 @@ public:
                 
             std::copy(list.begin(), list.end(), this->data);
         }
-        explicit list(const T fillValue, const size_t dynamicSize = 0) : list(dynamicSize)
+        
+        explicit list(const T fillValue) requires(dim != DYNAMIC) : list()
         {
             for(size_t i = 0; i < size(); ++i)
                 this->data[i] = fillValue;
         }
-        
+        explicit list(const T fillValue, const size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize)
+        {
+            for(size_t i = 0; i < size(); ++i)
+                this->data[i] = fillValue;
+        }
+
         template <typename... types>
         requires((std::is_convertible_v<types, T> &&...))
         list(types... args) requires(sizeof...(args) == dim || dim == DYNAMIC) : list(sizeof...(args))
@@ -236,7 +240,7 @@ public:
 
         template<typename D, size_t...sizes, typename...types>
         requires(std::is_convertible_v<types, D> && ...)
-        friend list<D, calc_comptime_sizes(sizes...)> join(const list<types, sizes>&...lists);
+        friend list<D, calc_comptime_size(sizes...)> join(const list<types, sizes>&...lists);
 
         template<typename D, typename...types>
         requires(std::is_convertible_v<types, D> && ...)
@@ -306,9 +310,14 @@ public:
         virtual ~list() = default;
     };
 
+    template <typename firstT, typename...types>
+    requires (std::is_convertible_v<types, firstT> && ...)
+    list(firstT first, types...args) -> list<firstT, sizeof...(args) + 1>;
+    
+
     template <typename...args>
     requires(std::is_same_v<args, size_t> && ...)
-    constexpr size_t calc_comptime_sizes(args...sizes) 
+    constexpr size_t calc_comptime_size(args...sizes) 
     {
         size_t sum = 0;
         for(const size_t& size : std::initializer_list<size_t>{sizes...})
@@ -321,11 +330,11 @@ public:
 
     template<typename D, size_t...sizes, typename...types>
     requires(std::is_convertible_v<types, D> && ...)
-    [[nodiscard]] list<D, calc_comptime_sizes(sizes...)> join(const list<types, sizes>&...lists)
+    [[nodiscard]] list<D, calc_comptime_size(sizes...)> join(const list<types, sizes>&...lists)
     {
         size_t totalSize = 0;
         ([&]{totalSize += lists.size();}(), ...);
-        list<D, calc_comptime_sizes(sizes...)> result(totalSize);
+        list<D, calc_comptime_size(sizes...)> result(totalSize);
         
         size_t sizeSoFar = 0;
         ([&]
@@ -353,6 +362,12 @@ public:
         }(), ...);
 
         return result;
+    }
+
+    template <size_t dim1, size_t dim2, typename T>
+    list<T, dim1 * dim2 == DYNAMIC ? DYNAMIC : dim1 + dim2> operator<<(const list<T, dim1>& lhs, const list<T, dim2>& rhs)
+    {
+        return join<T>(lhs, rhs);
     }
 
     template <int n_rows, int n_cols, typename T>
@@ -507,14 +522,15 @@ public:
             });
         }
     };
+    
+    template <typename firstT, typename...types>
+    requires (std::is_convertible_v<types, firstT> && ...)
+    vector(firstT first, types...args) -> vector<sizeof...(args) + 1, firstT>;
+    
+
     template <size_t dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
     
-    template <size_t dim, typename T>
-    vector<dim, T> operator<<(const vector<dim, T>& lhs, const vector<dim, T>& rhs)
-    {
-        //TODO impl
-    }
 
     template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
@@ -1146,7 +1162,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     const vector<2> Wx(0.f, 1.f);
     const vector<2> Wy(0.f, 1.f);
-    std::cout << math::vector<5, float>(math::join<float>({1, 2}, {3, 4}, {5}));
+
+    std::cout << vec3(1.f, 2.f, 3.f);
+    // std::cout << vector(1.f, 2.f, 3.f);
+    //std::cout << math::vector<3, float>();
+    
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
     R.rasterize({0.5, 0.5}, {255, 0, 0});
