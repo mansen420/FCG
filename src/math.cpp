@@ -234,41 +234,13 @@ public:
             return jointList;
         }
 
-        template<size_t...sizes, typename...types> //TODO make this return compile time sizes!
-        requires(std::is_convertible_v<types, T> && ...)
-        [[nodiscard]] static list<T, DYNAMIC> join(const list<types, sizes>&...lists)
-        {
-            size_t totalSize = 0;
-            ([&]{totalSize += lists.size();}(), ...);
-            list<T> result(totalSize);
-            
-            size_t sizeSoFar = 0;
-            ([&]
-            {
-                std::copy(lists.data, lists.data + lists.size(), result.data + sizeSoFar);
-                sizeSoFar += lists.size();
-            }(), ...);
+        template<typename D, size_t...sizes, typename...types>
+        requires(std::is_convertible_v<types, D> && ...)
+        friend list<D, calc_comptime_sizes(sizes...)> join(const list<types, sizes>&...lists);
 
-            return result;
-        }
-
-        template<typename...types>
-        requires(std::is_convertible_v<types, T> && ...)
-        [[nodiscard]] static list<T, DYNAMIC> join(const std::initializer_list<types>...lists)
-        {
-            size_t totalSize = 0;
-            ([&]{totalSize += lists.size();}(), ...);
-            list<T> result(totalSize);
-            
-            size_t sizeSoFar = 0;
-            ([&]
-            {
-                std::copy(lists.begin(), lists.end() + lists.size(), result.data + sizeSoFar);
-                sizeSoFar += lists.size();
-            }(), ...);
-
-            return result;
-        }
+        template<typename D, typename...types>
+        requires(std::is_convertible_v<types, D> && ...)
+        friend list<D, DYNAMIC> join(const std::initializer_list<types>&...lists);
 
         template<typename D>
         operator list<D, dim>const()
@@ -333,6 +305,55 @@ public:
         
         virtual ~list() = default;
     };
+
+    template <typename...args>
+    requires(std::is_same_v<args, size_t> && ...)
+    constexpr size_t calc_comptime_sizes(args...sizes) 
+    {
+        size_t sum = 0;
+        for(const size_t& size : std::initializer_list<size_t>{sizes...})
+            if(size == DYNAMIC)
+                return DYNAMIC;
+            else
+                sum += size;
+        return sum;
+    }
+
+    template<typename D, size_t...sizes, typename...types>
+    requires(std::is_convertible_v<types, D> && ...)
+    [[nodiscard]] list<D, calc_comptime_sizes(sizes...)> join(const list<types, sizes>&...lists)
+    {
+        size_t totalSize = 0;
+        ([&]{totalSize += lists.size();}(), ...);
+        list<D, calc_comptime_sizes(sizes...)> result(totalSize);
+        
+        size_t sizeSoFar = 0;
+        ([&]
+        {
+            std::copy(lists.data, lists.data + lists.size(), result.data + sizeSoFar);
+            sizeSoFar += lists.size();
+        }(), ...);
+
+        return result;
+    }
+
+    template<typename D, typename...types>
+    requires(std::is_convertible_v<types, D> && ...)
+    [[nodiscard]] list<D, DYNAMIC> join(const std::initializer_list<types>&...lists)
+    {
+        size_t totalSize = 0;
+        ([&]{totalSize += lists.size();}(), ...);
+        list<D> result(totalSize);
+        
+        size_t sizeSoFar = 0;
+        ([&]
+        {
+            std::copy(lists.begin(), lists.end() + lists.size(), result.data + sizeSoFar);
+            sizeSoFar += lists.size();
+        }(), ...);
+
+        return result;
+    }
 
     template <int n_rows, int n_cols, typename T>
     requires (n_rows >= 0 && n_cols >= 0)
@@ -489,6 +510,12 @@ public:
     template <size_t dim, typename T>
     std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
     
+    template <size_t dim, typename T>
+    vector<dim, T> operator<<(const vector<dim, T>& lhs, const vector<dim, T>& rhs)
+    {
+        //TODO impl
+    }
+
     template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
     {
@@ -980,11 +1007,19 @@ public:
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
 
-    typedef vector<3, float> vec3;
-    typedef vector<3, int> vec3i;
+    typedef vector<3, float>        vec3;
+    typedef vector<3, double>       vec3d;
+    typedef vector<3, int>          vec3i;
     typedef vector<3, unsigned int> vec3u;
-};
 
+    typedef matrix<4> mat4;
+    typedef matrix<3> mat3;
+    typedef matrix<2> mat2;
+
+    typedef matrix<4, 4, int> mat4i;
+    typedef matrix<3, 3, int> mat3i;
+    typedef matrix<2, 2, int> mat2i;
+};
 
 namespace output
 {
@@ -1064,7 +1099,8 @@ public:
             //TODO implement submatrix()
             //XXX this is UGLY. solution : 1.use short typenames, 2. fix the fuck out of join()
             //might be better to let go of std::initializer_list for variadic ctors tbh
-            math::vector<3, uint> pixelLoc = WtoSCR * math::vector<3, float>(math::list<float, 3>::join(worldLoc, math::list({1.f})));
+            math::vector<3, uint> pixelLoc = WtoSCR * math::vector<3, float>(math::join<float>(worldLoc, math::list({1.f})));
+            
             std::cout << WtoSCR << '\n';
             std::cout << pixelLoc;
             std::cout << worldLoc << ' ' << pixelLoc;
@@ -1110,7 +1146,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     const vector<2> Wx(0.f, 1.f);
     const vector<2> Wy(0.f, 1.f);
-
+    std::cout << math::vector<5, float>(math::join<float>({1, 2}, {3, 4}, {5}));
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
     R.rasterize({0.5, 0.5}, {255, 0, 0});
