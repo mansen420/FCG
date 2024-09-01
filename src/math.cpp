@@ -10,8 +10,8 @@
 #include <streambuf>
 #include <ostream>
 #include <sstream>
-#include <exception>
 
+#include <chrono>
 #include <concepts>
 
 #include "SDL.h"
@@ -73,11 +73,13 @@ public:
             assert(idx < size());
             return this->data[idx];
         }
-        T operator()(size_t idx)const
+        
+        const T& operator()(size_t idx)const
         {
             assert(idx < size());
             return this->data[idx];
         }
+        
         //return subset of list starting from fromIdx, to and excluding toIdx, such that fromIdx = 0,
         //toIdx = size() will return a copy of the entire list.
         list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)const
@@ -94,6 +96,9 @@ public:
         }
         list<T, DYNAMIC> offset(size_t x)const{return (*this)(x, size());}
         
+        //SPICY API //TODO this should NOT be const
+        T* get_data()const{return this->data;}
+
         //BEWARE! Mutable
         inline T& last()
         {
@@ -590,6 +595,9 @@ public:
                 return rowSize;
             return n_rows;
         }
+        
+        //SPICY API
+        T* get_data()const{return data.get_data();}
 
         typedef std::function<T(T value, int row, int col)>      Fmapping;
         typedef std::function<T(int row, int col)>              Fbuilding;
@@ -627,6 +635,7 @@ public:
             if(n_cols == DYNAMIC)
                 colSize = dynamicSizeCols;
         }
+        
         explicit matrix(const std::initializer_list<T>& list, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
         data(list)
         {
@@ -636,14 +645,18 @@ public:
                 colSize = dynamicSizeCols;
             assert(list.size() == this->cols() * this->rows());
         }
-        explicit matrix(T fillValue, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
+        
+        explicit matrix(T fillValue, size_t dynamicSizeRows, size_t dynamicSizeCols) requires(n_cols + n_rows == DYNAMIC) : 
         data(fillValue, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
         {
-            if(n_rows == DYNAMIC)
-                rowSize = dynamicSizeRows;
-            if(n_cols == DYNAMIC)
-                colSize = dynamicSizeCols;            
+            rowSize = dynamicSizeRows;
+            colSize = dynamicSizeCols;            
         }
+        explicit matrix(T fillValue) requires(n_cols * n_rows != DYNAMIC) : 
+        data(fillValue)
+        {
+        }
+        
         explicit matrix(Fbuilding builder, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
         data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
         {
@@ -653,7 +666,7 @@ public:
                 colSize = dynamicSizeCols;
             create(builder, *this);
         }
-        explicit matrix(const vector<n_rows*n_cols>& data, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : data{data} 
+        explicit matrix(const vector<n_rows*n_cols, T>& data, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : data{data} 
         {
             if(n_rows == DYNAMIC)
                 rowSize = dynamicSizeRows;
@@ -797,6 +810,10 @@ public:
         {
             return data[r*cols() + c];
         } 
+        const T& element(size_t r, size_t c)const
+        {
+            return data(r*cols() + c);
+        }
 
         void print(std::ostream& stream) const
         {
@@ -842,7 +859,7 @@ public:
 
             assert(rhs.rows() == lhs.cols());
 
-            const int mul_size = rhs.rows();
+            const size_t mul_size = rhs.rows();
 
             matrix<n_rows, nr_cols> result (this->rows(), rhs.cols());
 
@@ -1058,52 +1075,46 @@ public:
 namespace output
 {
     typedef math::vector<3, u_int8_t> RGB24;
-
-    template<uint nRows, uint nCols>
-    using colorbuffer = math::matrix<nRows, nCols, RGB24>;
-
-    template<uint nRows, uint nCols>
-    using alphabuffer = math::matrix<nRows, nCols, uint8_t>;
-
-    template<uint nLines = math::DYNAMIC, uint lineSpan = nLines>
-    struct framebuffer
+    struct RGBA32
     {
-        framebuffer(size_t nLinesDynamic = 0, size_t lineSpanDynamic = 0) : 
-        colorPlane(RGB24(uint8_t(255)), size_t(nLinesDynamic), size_t(lineSpanDynamic)),
-        alphaPlane(uint8_t(1.0), size_t(nLinesDynamic), size_t(lineSpanDynamic)) {}
-        
-        colorbuffer<nLines, lineSpan> colorPlane;
-        alphabuffer<nLines, lineSpan> alphaPlane;
+        uint8_t R;
+        uint8_t G;
+        uint8_t B;
+        uint8_t A;
     };
-    
+
     class window
     {
 public:
         SDL_Window* handle;
+        SDL_Surface* srf;
+        SDL_Renderer* renderer;
+        SDL_Texture* frame;
         window(const char* title, uint x, uint y, uint width, uint height)
         {
-            handle = SDL_CreateWindow(title, x, y, width, height, 0);
-            if(!handle)
+            auto res =SDL_CreateWindowAndRenderer(width, height, 0, &handle, &renderer);
+            if(res != 0)
+            {
+                std::cout << SDL_GetError();
                 throw std::runtime_error("WINDOW ERROR");
+            }
+            srf = SDL_GetWindowSurface(handle);
+            frame = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STREAMING, width, height);
         }
 
-        template<uint nLines, uint lineSpan>
-        void write_frame(const framebuffer<nLines, lineSpan>& frame)
+        template<int nLines, int lineSpan>
+        void write_frame(const math::matrix<nLines, lineSpan, RGBA32>& framedata)
         {
-            SDL_Surface* srf = SDL_GetWindowSurface(handle);
-            SDL_LockSurface(srf);
-            uint32_t* pixelPtr = (uint32_t*)srf->pixels;
-            for(size_t i = 0; i < frame.colorPlane.rows(); ++i)
-                for(size_t j = 0; j < frame.colorPlane.cols(); ++j)
-                {
-                    const RGB24& RGB = frame.colorPlane(i, j);
-                    pixelPtr[i*srf->w + j] = SDL_MapRGB(srf->format, RGB.r, RGB.g, RGB.b);
-                }
-            SDL_UnlockSurface(srf);
-        }
-        void update_surface()
-        {
-            SDL_UpdateWindowSurface(handle);
+            void* texPtr;
+            int texPitch;
+            SDL_LockTexture(frame, nullptr, &texPtr, &texPitch);
+            memcpy(texPtr, framedata.get_data(), texPitch * framedata.rows());
+            SDL_UnlockTexture(frame);
+
+            SDL_RenderClear(renderer);
+            SDL_Rect destination{0, 0, framedata.cols(), framedata.rows()};
+            SDL_RenderCopy(renderer, frame, nullptr, nullptr);
+            SDL_RenderPresent(renderer);
         }
     };
 };
@@ -1114,8 +1125,11 @@ namespace renderer
     class rasterizer
     {
 public:
-        output::framebuffer<math::DYNAMIC> raster;
-        rasterizer(size_t SCRwidth, size_t SCRheight, math::vector<2> worldXCoords, math::vector<2> worldYCoords) : raster(SCRheight, SCRwidth)
+        math::matrix<math::DYNAMIC, math::DYNAMIC, output::RGBA32> raster;
+        math::matrix<3> WtoSCR;
+
+        rasterizer(size_t SCRwidth, size_t SCRheight, math::vector<2> worldXCoords, math::vector<2> worldYCoords) : 
+        raster(output::RGBA32{255, 255, 255, 255}, SCRwidth, SCRheight)
         {
             const auto width = worldXCoords[1] - worldXCoords[0];
             const auto height = worldYCoords[1] - worldYCoords[0];
@@ -1126,37 +1140,31 @@ public:
             WtoSCR = WtoSCR * math::homogeneous<3>(math::scale<2>({float(SCRwidth)/(width),
             float(SCRheight)/(height)}), {0, 0, 1}, {0, 0, 1});
         }
-        math::matrix<3> WtoSCR;
-        void rasterize(const math::vector<2, float>& worldLoc, const output::RGB24& color)
+        void rasterize(const math::vector<2, float>& worldLoc, const output::RGBA32& color)
         {
             //TODO this conversion is causing overflow.
             //TODO implement submatrix()
-            //XXX this is UGLY. solution : 1.use short typenames, 2. fix the fuck out of join()
-            //might be better to let go of std::initializer_list for variadic ctors tbh
             math::vector<3, uint> pixelLoc = WtoSCR * math::vector<3, float>(math::join<float>(worldLoc, math::list({1.f})));
             
-            std::cout << WtoSCR << '\n';
-            std::cout << pixelLoc;
-            std::cout << worldLoc << ' ' << pixelLoc;
-            if(pixelLoc.x > raster.colorPlane.cols() || pixelLoc.y > raster.colorPlane.rows())
+            if(pixelLoc.x > raster.cols() || pixelLoc.y > raster.rows())
                 return;
-            raster.colorPlane.element(pixelLoc.y, pixelLoc.x) = color;
+            raster.element(pixelLoc.y, pixelLoc.x) = color;
         }
 
-        output::framebuffer<math::DYNAMIC> get_framebuffer(const math::vector<2, uint>& renderTargetSize)
+        math::matrix<math::DYNAMIC, math::DYNAMIC, output::RGBA32> get_framebuffer(const math::vector<2, uint>& renderTargetSize)
         {
-            if(renderTargetSize.x == raster.colorPlane.cols() && renderTargetSize.y == raster.colorPlane.rows())
+            if(renderTargetSize.x == raster.cols() && renderTargetSize.y == raster.rows())
                 return raster;
 
-            output::framebuffer<math::DYNAMIC> renderTarget(renderTargetSize.y, renderTargetSize.x);
-
-            renderTarget.colorPlane.mutate([this, &renderTargetSize](output::RGB24& pixel, int row, int col) -> void
+            //very slow
+            math::matrix<math::DYNAMIC, math::DYNAMIC, output::RGBA32> renderTarget(renderTargetSize.y, renderTargetSize.x);
+            renderTarget.mutate([this, &renderTargetSize](output::RGBA32& pixel, int row, int col) -> void
             {
                 constexpr uint halfPixel = 0.5;
                 float vCenter = float(row + halfPixel)/renderTargetSize.y; //[0, 1)
                 float hCenter = float(col + halfPixel)/renderTargetSize.x;
 
-                pixel = this->raster.colorPlane(vCenter * raster.colorPlane.rows(), hCenter * raster.colorPlane.cols());
+                pixel = this->raster(vCenter * raster.rows(), hCenter * raster.cols());
             });
             return renderTarget;
         }
@@ -1168,10 +1176,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return -1;
 
-    constexpr uint wFramebuffer = 50;
-    constexpr uint hFramebuffer = 50;
-    constexpr uint wWindow = 200;
-    constexpr uint hWindow = 200;
+    constexpr uint wFramebuffer = 500;
+    constexpr uint hFramebuffer = 500;
+    constexpr uint wWindow = 500;
+    constexpr uint hWindow = 500;
 
     using namespace math;
     using namespace output;
@@ -1180,18 +1188,34 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     const vector<2> Wx(0.f, 1.f);
     const vector<2> Wy(0.f, 1.f);
-
-    std::cout << vec(1, 2, 4);
+    
+    struct ms_timer
+    {
+        std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+        [[nodiscard]] std::chrono::milliseconds clock()
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
+        }
+    };
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
 
-    R.rasterize(vec2(0.5f, 0.5f), RGB24(255, 0, 0));
+    bool quit = false;
+    while(!quit)
+    {
 
-    window.write_frame(R.get_framebuffer(vector<2, uint>({wWindow, hWindow})));
+        SDL_Event e;
+        while(SDL_PollEvent(&e))
+            if(e.type == SDL_QUIT)
+                quit = true;
 
-    window.update_surface();
+        R.rasterize(vec2(0.5f, 0.5f), RGBA32({255, 0, 0 , 255}));
+ms_timer frameTimer;
+        auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
+        window.write_frame(test);
+auto frameDelta = frameTimer.clock();
 
-    SDL_Delay(1000);
-
+       std::cout << 1000/frameDelta.count() << " FPS" << '\n';
+    }
     return 0;
 }
