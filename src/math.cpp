@@ -18,12 +18,12 @@
 
 namespace math
 {
-    template <typename T>
+    template <typename T, bool block = false, size_t dim = 0>
     class basic_aggregate
     {
 protected:
         bool ownsData = true;
-        T* data;
+        std::conditional_t<block, T[dim], T*> data;
 public:
         basic_aggregate() = default;
         explicit basic_aggregate(T* const data) : ownsData{false}, data{data}{}
