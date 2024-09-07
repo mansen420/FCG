@@ -18,18 +18,18 @@
 
 namespace math
 {
-    template <typename T, bool block = false, size_t dim = 0>
+    template <typename T, bool inlined = false, size_t inlineSize = 0>
     class basic_aggregate
     {
 protected:
         bool ownsData = true;
-        std::conditional_t<block, T[dim], T*> data;
+        std::conditional_t<inlined, T[inlineSize], T*> data;
 public:
         basic_aggregate() = default;
         explicit basic_aggregate(T* const data) : ownsData{false}, data{data}{}
         virtual ~basic_aggregate()
         {
-            if(ownsData)
+            if(ownsData && !inlined)
                 delete[] data;
         }
     };
@@ -44,14 +44,13 @@ public:
     template <size_t dim, typename T>
     class vector;
 
-    template <typename T, size_t dim = DYNAMIC>
-    requires (dim >= 0)
+    template <typename T, size_t dim = DYNAMIC, bool inlined = 0>
+    requires (!(inlined && dim == DYNAMIC))
     class list : public basic_aggregate<T>
     {
-        template<typename D, size_t size>
-        requires (size >= 0)
+        template<typename, size_t, bool>
         friend class list;
-
+        
         typedef std::function<T(size_t idx)> builder;
         typedef std::function<T(T value, size_t idx)> mapping;
         typedef std::function<void(T& value, size_t idx)> mutation;
