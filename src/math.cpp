@@ -18,39 +18,26 @@
 
 namespace math
 {
-    template <typename T, bool inlined = false, size_t inlineSize = 0>
-    class basic_aggregate
-    {
-protected:
-        bool ownsData = true;
-        std::conditional_t<inlined, T[inlineSize], T*> data;
-public:
-        basic_aggregate() = default;
-        explicit basic_aggregate(T* const data) : ownsData{false}, data{data}{}
-        virtual ~basic_aggregate()
-        {
-            if(ownsData && !inlined)
-                delete[] data;
-        }
-    };
-
     constexpr uint DYNAMIC = 0;
     struct empty 
     {
         empty& operator=(size_t){return *this;}
         operator size_t()const{return size_t(0);}
     };
-           
-    template <size_t dim, typename T>
+
+    template <size_t, typename, bool>
     class vector;
 
     template <typename T, size_t dim = DYNAMIC, bool inlined = 0>
     requires (!(inlined && dim == DYNAMIC))
-    class list : public basic_aggregate<T>
+    class list
     {
         template<typename, size_t, bool>
         friend class list;
-        
+
+        bool ownsData = true;
+
+        //TODO use template lambdas
         typedef std::function<T(size_t idx)> builder;
         typedef std::function<T(T value, size_t idx)> mapping;
         typedef std::function<void(T& value, size_t idx)> mutation;
@@ -59,45 +46,45 @@ public:
         using reduction = std::function<D(T val, size_t idx, D prev)>;
 
         [[no_unique_address]] std::conditional_t<dim == 0, size_t, empty> dynamicSize;
+protected:
+        std::conditional_t<inlined, T[dim], T*> data;
 public:
-        inline size_t size() const
-        {
-            if(dim == DYNAMIC)
-                return dynamicSize;
-            return dim;
-        }
+        inline size_t size()const requires (dim != DYNAMIC){return dim;}
+        inline constexpr size_t size()const requires (dim == DYNAMIC){return dynamicSize;}
 
         T& operator[](size_t idx)
         {
             assert(idx < size());
             return this->data[idx];
         }
-        
         const T& operator()(size_t idx)const
         {
             assert(idx < size());
             return this->data[idx];
         }
         
-        //return subset of list starting from fromIdx, to and excluding toIdx, such that fromIdx = 0,
-        //toIdx = size() will return a copy of the entire list.
-        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx)const
+        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) requires(!inlined)
         {
-            assert (fromIdx <= toIdx && toIdx <= size());
-            if(fromIdx == toIdx)
-                return list<T>();
-            list<T, DYNAMIC> result(toIdx - fromIdx);
-            list<T, DYNAMIC>::create([this, fromIdx](size_t idx)
-            {
-                return (*this)(idx + fromIdx);
-            }, result);
-            return result;
+            assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
+            return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
         }
-        list<T, DYNAMIC> offset(size_t x)const{return (*this)(x, size());}
+        const list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) const
+        {
+            return this->operator()(fromIdx, toIdx);
+        }
         
-        //SPICY API //TODO this should NOT be const
-        T* get_data()const{return this->data;}
-
+        const T* begin()const requires(!inlined){return this->data;}
+        const T* end()const requires(!inlined){return this->data + this->size();}
+        
+        T* begin()requires(!inlined){return this->data;}
+        T* end()requires(!inlined){return this->data + this->size();}
+        
+        const auto begin()const requires(inlined){return std::begin(data);}
+        const auto end()const requires(inlined){return std::end(data);}
+        
+        auto begin()requires(inlined){return std::begin(data);}
+        auto end()requires(inlined){return std::end(data);}
+        
         //BEWARE! Mutable
         inline T& last()
         {
@@ -106,23 +93,12 @@ public:
         }
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
-        template<size_t size, typename D>
+        template<size_t size, typename D, bool inl>
         requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
-        list& operator=(const list<D, size>& rhs)
+        list& operator=(const list<D, size, inl>& rhs)
         {
             assert(this->size() >= rhs.size());
-            // const size_t sizeConstraint = std::min(rhs.size(), this->size());
-            if(rhs.ownsData == false)
-            {
-                assert(this->size() == rhs.size()); //guarantees same behaviour as normal operator=()
-                if(this->ownsData)
-                    delete[] this->data;
-                this->data = (T*)rhs.data;
-                this->ownsData = false;
-            }
-            else
-                for(size_t i = 0; i < rhs.size(); ++i)
-                    this->data[i] = rhs.data[i];
+            std::copy(rhs.begin(), rhs.end(), this->begin());
             return *this;
         }
         list& operator=(const list& rhs)
@@ -130,80 +106,97 @@ public:
             if(this == &rhs)
                 return *this;
             assert(rhs.size() == this->size());
-            if(rhs.ownsData == false)
-            {
-                if(this->ownsData)
-                    delete[] this->data;
-                this->data = rhs.data;
-                this->ownsData = false;
-            }
-            else
-            {
-                for(size_t i = 0; i < rhs.size(); ++i)
-                    this->data[i] = rhs.data[i];
-            }
+            std::copy(rhs.begin(), rhs.end(), this->begin());
             return *this;
         }
-        list& operator=(const std::initializer_list<T>& data)
+        list& operator=(const std::initializer_list<T>& data) requires(inlined)
         {
             assert(data.size() == this->size());
-            std::copy(data.begin(), data.end(), this->data);
+            std::copy(data.begin(), data.end(), this->begin());
             return *this;
         }
         
-        template<size_t size, typename D>
-        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
-        explicit list(const list<D, size>& copy, size_t dynamicSize = 0) : list(dynamicSize) {*this = copy;}
-        list(const list& copy) : list(copy.size()) {*this = copy;}
+        template<size_t size, typename D, bool inl>
+        requires (dim >= size || size == DYNAMIC && std::is_convertible_v<D, T>)
+        explicit list(const list<D, size, inl>& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
+        
+        template<size_t size, typename D, bool inl>
+        requires (dim >= size || size == DYNAMIC && std::is_convertible_v<D, T>)
+        explicit list(const list<D, size, inl>& copy, size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize) {*this = copy;}
+        
+        list(const list& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
+        list(const list& copy) requires(dim == DYNAMIC) : list(copy.size()) {*this = copy;}
 
-        explicit list() requires (dim != DYNAMIC)
+        explicit list() requires (dim != DYNAMIC && !inlined)
         {
             this->data = new T[dim];
         }
-        explicit list(const size_t dynamicSize) requires(dim == DYNAMIC)
+        explicit list(const size_t dynamicSize) requires(dim == DYNAMIC && !inlined)
         {
             this->dynamicSize = dynamicSize;
             this->data = new T[dynamicSize];
         }
         
-        explicit list(T* const data, const size_t dynamicSize = 0)  requires(dim != DYNAMIC) : basic_aggregate<T>(data){}
-        explicit list(T* const data, const size_t dynamicSize) requires(dim == DYNAMIC) : basic_aggregate<T>(data), dynamicSize(dynamicSize){}
+        explicit list() requires(inlined && dim != DYNAMIC) = default;
+
+        explicit list(T* const data)  requires(dim != DYNAMIC && !inlined) : ownsData{false}, data{data} {}
+        explicit list(T* const data, const size_t dynamicSize) requires(dim == DYNAMIC && !inlined) : 
+        ownsData{false}, data{data}, dynamicSize(dynamicSize){}
         
-        list(const std::initializer_list<T>& list) : list::list(list.size())
+        list(const std::initializer_list<T>& list) requires(dim == DYNAMIC) : list::list(list.size())
         {
-            if(dim == DYNAMIC)
-                this->dynamicSize = list.size();
-            else
-                assert(list.size() == dim);
-                
-            std::copy(list.begin(), list.end(), this->data);
+            std::copy(list.begin(), list.end(), this->begin());
+        }
+        list(const std::initializer_list<T>& list) requires(dim != DYNAMIC) : list::list()
+        {
+            assert(list.size() <= dim);
+            std::copy(list.begin(), list.end(), this->begin());
         }
         
-        explicit list(const T fillValue) requires(dim != DYNAMIC) : list()
+        explicit list(const T& fillValue) requires(dim != DYNAMIC) : list()
         {
-            for(size_t i = 0; i < size(); ++i)
-                this->data[i] = fillValue;
+            std::fill(this->begin(), this->end(), fillValue);
         }
-        explicit list(const T fillValue, const size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize)
+        explicit list(const T& fillValue, const size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize)
         {
-            for(size_t i = 0; i < size(); ++i)
-                this->data[i] = fillValue;
+            std::fill(this->begin(), this->end(), fillValue);
         }
 
         template <typename... types>
         requires((std::is_convertible_v<types, T> &&...))
-        list(types... args) requires(sizeof...(args) == dim || dim == DYNAMIC) : list(sizeof...(args))
+        list(types... args) requires(sizeof...(args) == dim && dim != DYNAMIC) : list()
         {
             size_t i = 0;
-            ([&]{this->data[i++] = args;}(), ...);
+            ([&i, this, &args]{this->data[i++] = args;}(), ...);
+        }
+        template <typename... types>
+        requires((std::is_convertible_v<types, T> &&...))
+        list(types... args) requires(dim == DYNAMIC) : list(sizeof...(args))
+        {
+            size_t i = 0;
+            ([&i, this, &args]{this->data[i++] = args;}(), ...);
         }
 
-        static void create(builder fnc, list& out)
+        explicit list(const builder& fnc, size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize)
         {
-            for(size_t i = 0; i < out.size(); ++i)
-                out.data[i] = fnc(i);
+            create(fnc, *this);
         }
-        [[nodiscard]] list map(mapping fnc) const
+        explicit list(const builder& fnc) requires(dim != DYNAMIC) : list()
+        {
+            create(fnc, *this);
+        }
+
+        
+        static void create(const builder& fnc, list& out)
+        {
+            //TODO the return type of fnc might be expensive ?
+            //Also is it an error to not call the destructor of T?
+            const auto SIZE = out.size();
+            for(size_t i = 0; i < SIZE; ++i)
+                new (out.begin() + i) T (fnc(i));
+        }
+        
+        const list& map(mapping fnc) const
         {
             list result(size_t(this->dynamicSize));
             create([&fnc, this](size_t idx) -> T
@@ -218,7 +211,7 @@ public:
                 fnc(this->data[i], i);
             return *this;
         }
-        list for_each(process fnc)const
+        const list& for_each(process fnc)const
         {
             for(size_t i = 0; i < size(); ++i)
                 fnc(this->data[i], i);
@@ -285,7 +278,8 @@ public:
             list<T, DYNAMIC> window(&this->data[fromIdx], copySize);    //pointer 
             window = data;
         }
-
+        
+        //TODO we can handle cases where newSize <= this->size() more efficiently by simply decrementing the data pointer
         void resize(size_t newSize) requires(dim == DYNAMIC)
         {
             assert(this->ownsData);
@@ -311,14 +305,32 @@ public:
             return result;
         }
         
-        virtual ~list() = default;
+        inline void print(std::ostream& stream) const
+        {
+            stream << "{";
+            this->for_each([&stream, this](T value, size_t idx)
+            {
+                stream << value;
+                if(idx != (this->size() - 1))
+                    stream << ' ';
+            });
+            stream << "}";
+        }
+
+        virtual ~list()
+        {
+            if(!inlined && ownsData)
+                delete[] data;
+        }
     };
 
+    template <size_t dim, typename T>
+    std::ostream& operator<<(std::ostream& stream, const list<T, dim>& m){m.print(stream); return stream;}
+    
     template <typename firstT, typename...types>
     requires (std::is_convertible_v<types, firstT> && ...)
     list(firstT first, types...args) -> list<firstT, sizeof...(args) + 1>;
     
-
     template <typename...args>
     requires(std::is_same_v<args, size_t> && ...)
     constexpr size_t calc_comptime_size(args...sizes) 
