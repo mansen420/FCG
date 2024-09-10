@@ -35,6 +35,7 @@ namespace math
         template<typename, size_t, bool>
         friend class list;
 
+        //can you make this compile time?
         bool ownsData = true;
 
         //TODO use template lambdas
@@ -49,8 +50,10 @@ namespace math
 protected:
         std::conditional_t<inlined, T[dim], T*> data;
 public:
-        inline size_t size()const requires (dim != DYNAMIC){return dim;}
-        inline constexpr size_t size()const requires (dim == DYNAMIC){return dynamicSize;}
+        /// @return Number of elements in the list evaluated at compile time.
+        inline constexpr size_t size()const requires (dim != DYNAMIC){return dim;}
+        /// @return Number of elements in the list fetched at runtime. 
+        inline size_t size()const requires (dim == DYNAMIC){return dynamicSize;}
 
         T& operator[](size_t idx)
         {
@@ -63,34 +66,49 @@ public:
             return this->data[idx];
         }
         
+        /// @param fromIdx 
+        /// Index of first element of the sublist, satisfying fromIdx <= toIdx
+        /// @param toIdx 
+        /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
+        /// @return 
+        /// A non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
         list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) requires(!inlined)
         {
             assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
             return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
         }
+
+        /// @param fromIdx 
+        /// Index of first element of the sublist, satisfying fromIdx <= toIdx
+        /// @param toIdx 
+        /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
+        /// @return 
+        /// A const non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
         const list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) const
         {
             return this->operator()(fromIdx, toIdx);
         }
-        
+        //TODO make the compile time version of the above operator()
+
         const T* begin()const requires(!inlined){return this->data;}
         const T* end()const requires(!inlined){return this->data + this->size();}
-        
         T* begin()requires(!inlined){return this->data;}
         T* end()requires(!inlined){return this->data + this->size();}
         
         const auto begin()const requires(inlined){return std::begin(data);}
         const auto end()const requires(inlined){return std::end(data);}
-        
         auto begin()requires(inlined){return std::begin(data);}
         auto end()requires(inlined){return std::end(data);}
         
-        //BEWARE! Mutable
+        /// @brief Last element in list satisfying size() > 0.
+        /// @return Non-const reference to last element in list.
         inline T& last()
         {
             assert(this->size() > 0);
             return this->data[this->size() - 1];
         }
+      
+        //                                      **copy semantics**
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
         template<size_t size, typename D, bool inl>
@@ -101,6 +119,7 @@ public:
             std::copy(rhs.begin(), rhs.end(), this->begin());
             return *this;
         }
+        
         list& operator=(const list& rhs)
         {
             if(this == &rhs)
@@ -127,18 +146,56 @@ public:
         list(const list& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
         list(const list& copy) requires(dim == DYNAMIC) : list(copy.size()) {*this = copy;}
 
-        explicit list() requires (dim != DYNAMIC && !inlined)
+        //                                      **move semantics**
+
+        template<size_t size>
+        requires(dim == size || size == DYNAMIC)
+        list(list<T, size, inlined>&& other) requires(!inlined && dim != DYNAMIC) : data{other.data}
         {
-            this->data = new T[dim];
+            assert(this->size() == other.size());
+            other.ownsData = false;
         }
-        explicit list(const size_t dynamicSize) requires(dim == DYNAMIC && !inlined)
+        template<size_t size>
+        list(list<T, size, inlined>&& other) requires(!inlined && dim == DYNAMIC) : data{other.data}, dynamicSize{other.size()}
         {
-            this->dynamicSize = dynamicSize;
-            this->data = new T[dynamicSize];
+            assert(this->size == other.size());
+            other.ownsData = false;
+        }
+
+        list(list&& other)requires(!inlined && dim != DYNAMIC) : data{other.data}
+        {
+            other.ownsData = false;
+        }
+        list(list&& other)requires(!inlined && dim == DYNAMIC) : data{other.data}, dynamicSize{other.size()}
+        {
+            other.ownsData = false;
+        }
+
+        template<size_t size, typename D, bool inl>
+        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        list& operator=(list<D, size, inl>&& rhs)
+        {
+            assert(this->size() >= rhs.size());
+            const auto SIZE = this->size();
+            for(size_t i = 0; i < SIZE; ++i)
+                (*this)[i] = std::move(rhs[i]);
+            return *this;
+        }
+        list& operator=(list&& rhs) requires(!inlined && dim == DYNAMIC)
+        {
+            const auto SIZE = this->size();
+            for(size_t i = 0; i < SIZE; ++i)
+                (*this)[i] = std::move(rhs[i]);
+            return *this;
         }
         
-        explicit list() requires(inlined && dim != DYNAMIC) = default;
+        //                                      **constructors**
 
+        explicit list() requires (dim != DYNAMIC && !inlined) : data{new T[dim]}{}
+        explicit list(const size_t dynamicSize) requires(dim == DYNAMIC && !inlined) : dynamicSize{dynamicSize}, data{new T[dynamicSize]}{}
+        
+        explicit list() requires(inlined && dim != DYNAMIC) = default;
+        
         explicit list(T* const data)  requires(dim != DYNAMIC && !inlined) : ownsData{false}, data{data} {}
         explicit list(T* const data, const size_t dynamicSize) requires(dim == DYNAMIC && !inlined) : 
         ownsData{false}, data{data}, dynamicSize(dynamicSize){}
@@ -163,8 +220,8 @@ public:
         }
 
         template <typename... types>
-        requires((std::is_convertible_v<types, T> &&...))
-        list(types... args) requires(sizeof...(args) == dim && dim != DYNAMIC) : list()
+        requires((std::is_convertible_v<types, T> &&...) && dim != DYNAMIC)
+        list(types... args) requires(sizeof...(args) == dim) : list()
         {
             size_t i = 0;
             ([&i, this, &args]{this->data[i++] = args;}(), ...);
@@ -181,12 +238,13 @@ public:
         {
             create(fnc, *this);
         }
-        explicit list(const builder& fnc) requires(dim != DYNAMIC) : list()
+        explicit list(const builder& fnc) requires(dim != DYNAMIC) 
         {
             create(fnc, *this);
         }
 
-        
+        //                                      ****
+
         static void create(const builder& fnc, list& out)
         {
             //TODO the return type of fnc might be expensive ?
@@ -324,8 +382,8 @@ public:
         }
     };
 
-    template <size_t dim, typename T>
-    std::ostream& operator<<(std::ostream& stream, const list<T, dim>& m){m.print(stream); return stream;}
+    template <size_t dim, typename T, bool inlined>
+    std::ostream& operator<<(std::ostream& stream, const list<T, dim, inlined>& m){m.print(stream); return stream;}
     
     template <typename firstT, typename...types>
     requires (std::is_convertible_v<types, firstT> && ...)
@@ -378,12 +436,6 @@ public:
         }(), ...);
 
         return result;
-    }
-
-    template <size_t dim1, size_t dim2, typename T>
-    list<T, dim1 * dim2 == DYNAMIC ? DYNAMIC : dim1 + dim2> operator<<(const list<T, dim1>& lhs, const list<T, dim2>& rhs)
-    {
-        return join<T>(lhs, rhs);
     }
 
     template <typename...types>
@@ -448,12 +500,12 @@ public:
 
         template<size_t size, typename D, bool inl>
         requires ((dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
-        explicit vector(const vector<size, D, inl>& other) requires(dim != DYNAMIC) : list<T, dim, inlined>(other){}
+        vector(const vector<size, D, inl>& other) requires(dim != DYNAMIC) : list<T, dim, inlined>(other){}
         
         template<size_t size, typename D, bool inl>
         requires (std::is_convertible_v<D, T>)
-        explicit vector(const vector<size, D, inl>& other, size_t dynamicSize) requires(dim == DYNAMIC) :
-        list<T, dim, inlined>(other, dynamicSize){}
+        vector(const vector<size, D, inl>& other) requires(dim == DYNAMIC) :
+        list<T, dim, inlined>(other, other.size()){}
 
         vector(const vector& other) : list<T, dim, inlined>(other){}
         
@@ -570,7 +622,6 @@ public:
     requires (std::is_convertible_v<types, firstT> && ...)
     vector(firstT first, types...args) -> vector<sizeof...(args) + 1, firstT>;
     
-
     template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
     {
@@ -1139,7 +1190,7 @@ public:
             void* texPtr;
             int texPitch;
             SDL_LockTexture(frame, nullptr, &texPtr, &texPitch);
-            memcpy(texPtr, framedata.data.get_data(), texPitch * framedata.rows());
+            memcpy(texPtr, framedata.data.begin(), texPitch * framedata.rows());
             SDL_UnlockTexture(frame);
 
             SDL_RenderClear(renderer);
@@ -1153,7 +1204,7 @@ public:
 //TODO this class is temporary as fuck
 namespace renderer
 {
-    
+
     class rasterizer
     {
 public:
@@ -1238,6 +1289,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     
     list<float, 2, true> k(1.f, 2.f);
+    std::cout << k;
 
     bool quit = false;
     ms_timer frameTimer;
@@ -1252,8 +1304,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
 auto frameDelta = frameTimer.clock();
         window.write_frame(test);
-
-       std::cout << frameDelta.count() << " ms" << '\n';
     }
     return 0;
 }
