@@ -1302,8 +1302,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     
-    list<output::RGBA32, 3, true> s;
-    list<unsigned char, 4, true> k;
+    list<list<unsigned char, 4, true>> s(500*500);   
+    RGBA32 k[100];
 
     bool quit = false;
     ms_timer frameTimer;
