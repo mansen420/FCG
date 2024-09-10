@@ -1126,6 +1126,8 @@ public:
         return result;
     }
 
+    // convenience typedefs
+
     template <int dim, typename T = float>
     using col_vector = matrix<dim, 1, T>;
     
@@ -1135,30 +1137,40 @@ public:
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
 
-    //TODO make these their own inlined classes
-    typedef vector<4, float>        vec4;
+    template <typename T, size_t dim>
+    using inline_list = list<T, dim, true>;
+
+    template <typename T>
+    using list3 = list<T, 3, true>;
+
+    typedef inline_list<float, 3> list3f;
+    typedef inline_list<float, 3> list3i;
+    typedef inline_list<float, 3> list3d;
+    typedef inline_list<float, 3> list3u;
+
+    typedef vector<4, float>        vec4f;
     typedef vector<4, double>       vec4d;
     typedef vector<4, int>          vec4i;
     typedef vector<4, unsigned int> vec4u;
 
-    typedef vector<3, float>        vec3;
+    typedef vector<3, float>        vec3f;
     typedef vector<3, double>       vec3d;
     typedef vector<3, int>          vec3i;
     typedef vector<3, unsigned int> vec3u;
 
-    typedef vector<2, float>        vec2;
+    typedef vector<2, float>        vec2f;
     typedef vector<2, double>       vec2d;
     typedef vector<2, int>          vec2i;
     typedef vector<2, unsigned int> vec2u;
 
-    typedef vector<1, float>        vec1;
+    typedef vector<1, float>        vec1f;
     typedef vector<1, double>       vec1d;
     typedef vector<1, int>          vec1i;
     typedef vector<1, unsigned int> vec1u;
 
-    typedef matrix<4> mat4;
-    typedef matrix<3> mat3;
-    typedef matrix<2> mat2;
+    typedef matrix<4> mat4f;
+    typedef matrix<3> mat3f;
+    typedef matrix<2> mat2f;
 
     typedef matrix<4, 4, int> mat4i;
     typedef matrix<3, 3, int> mat3i;
