@@ -386,20 +386,50 @@ public:
         return join<T>(lhs, rhs);
     }
 
+    template <typename...types>
+    requires(std::is_same_v<types, size_t> && ...)
+    constexpr bool all_dynamic(types...args)
+    {
+        return ((args == 0) &&...);
+    }
+    template <typename...types>
+    requires(std::is_same_v<types, size_t> && ...)
+    constexpr bool any_dynamic(types...args)
+    {
+        return ((args == 0) ||...);
+    }
+
+    template <typename T>
+    class list_view : public list<list<T, DYNAMIC>, DYNAMIC>
+    {
+        const size_t stride, offset;
+public:
+        list_view(T* beginAddr, size_t stride, size_t offset, size_t nrStrides) : 
+        list<list<T, DYNAMIC>, DYNAMIC>([=](size_t idx)
+        {
+            return list<T, DYNAMIC>(beginAddr + idx * (stride + offset), stride);
+        }, nrStrides),
+        stride{stride},
+        offset{offset} 
+        {}
+    };
+    template <typename T>
+    list_view(T*) -> list_view<T>;
+
     template <int n_rows, int n_cols, typename T>
     requires (n_rows >= 0 && n_cols >= 0)
     class matrix;
 
     //Pure vector class
-    template <size_t dim = DYNAMIC, typename T = float>
-    class vector : public list<T, dim>
+    template <size_t dim = DYNAMIC, typename T = float, bool inlined = false>
+    class vector : public list<T, dim, inlined>
     {
 protected:
         template <int n_rows, int n_cols, typename D>
         requires (n_rows >= 0 && n_cols >= 0)
         friend class matrix;
 public:
-        using list<T, dim>::list;
+        using list<T, dim, inlined>::list;
 
         template<size_t size>
         requires (dim >= size || dim * size == DYNAMIC)
@@ -416,17 +446,26 @@ public:
             return *this;
         };
 
-        template<size_t size, typename D>
-        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
-        explicit vector(const vector<size, D>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
+        template<size_t size, typename D, bool inl>
+        requires ((dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
+        explicit vector(const vector<size, D, inl>& other) requires(dim != DYNAMIC) : list<T, dim, inlined>(other){}
         
-        vector(const vector& other) : list<T, dim>(other){}
-        
-        vector(const list<T, dim>& other) : list<T, dim>(other){}
+        template<size_t size, typename D, bool inl>
+        requires (std::is_convertible_v<D, T>)
+        explicit vector(const vector<size, D, inl>& other, size_t dynamicSize) requires(dim == DYNAMIC) :
+        list<T, dim, inlined>(other, dynamicSize){}
 
-        template<size_t size, typename D>
-        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
-        vector(const list<D, size>& other, size_t dynamicSize = 0) : list<T, dim>(other, dynamicSize){}
+        vector(const vector& other) : list<T, dim, inlined>(other){}
+        
+        vector(const list<T, dim>& other) : list<T, dim, inlined>(other){}
+
+        template<size_t size, typename D, bool inl>
+        requires ((dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
+        vector(const list<D, size>& other)requires(dim != DYNAMIC) : list<T, dim>(other){}
+
+        template<size_t size, typename D, bool inl>
+        requires (std::is_convertible_v<D, T>)
+        vector(const list<D, size>& other, size_t dynamicSize)requires(dim == DYNAMIC) : list<T, dim>(other, dynamicSize){}
 
         const T& x = this->data[0];
         const T& y = this->data[1];
@@ -447,18 +486,6 @@ public:
         [[nodiscard]] inline matrix<1, dim, T> row()const
         {
             return matrix<1, dim, T>(*this, this->size());
-        }
-
-        inline void print(std::ostream& stream) const
-        {
-            stream << "{";
-            this->for_each([&](T value, size_t idx)
-            {
-                stream << value;
-                if(idx != dim - 1)
-                    stream << ' ';
-            });
-            stream << "}";
         }
 
         inline vector operator+ (const vector& rhs) const
@@ -545,10 +572,6 @@ public:
     
 
     template <size_t dim, typename T>
-    std::ostream& operator<<(std::ostream& stream, const vector<dim, T>& m){m.print(stream); return stream;}
-    
-
-    template <size_t dim, typename T>
     vector<dim, T> operator* (float coeff, const vector<dim, T>& u)
     {
         return u*coeff;
@@ -572,14 +595,12 @@ public:
         requires (r >= 0 && c >= 0)
         friend class matrix;
 
-        vector<n_rows*n_cols, T> data;
-
-        T& operator[](size_t idx) {return this->data[idx];}
-        
-        
         [[no_unique_address]] std::conditional_t<n_rows == DYNAMIC, size_t, empty> rowSize;
         [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> colSize; 
 public:
+        T& operator[](size_t idx) {return this->data[idx];}
+        vector<n_rows*n_cols, T> data;
+
         static matrix get_identity(size_t dynamicSize = 0)
         {
             static_assert(n_rows == n_cols);
@@ -607,8 +628,6 @@ public:
             return n_rows;
         }
         
-        //SPICY API
-        T* get_data()const{return data.get_data();}
 
         typedef std::function<T(T value, int row, int col)>      Fmapping;
         typedef std::function<T(int row, int col)>              Fbuilding;
@@ -719,11 +738,11 @@ public:
                 for(size_t j = 0; j < result.cols(); ++j)
                     result.data[i*result.cols() + j] = build(i, j);
         }
-        inline matrix& mutate(Fmutation mutation)
+        inline matrix& mutate(const Fmutation& mutation)
         {
             for(size_t i = 0; i < rows(); ++i)
                 for(size_t j = 0; j < cols(); ++j)
-                    mutation(this->data[i*cols() + j], i, j);
+                    mutation(this->data[i * cols() + j], i, j);
             return *this;
         }
         inline const matrix& for_each(Faction action) const
@@ -1051,6 +1070,7 @@ public:
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
 
+    //TODO make these their own inlined classes
     typedef vector<4, float>        vec4;
     typedef vector<4, double>       vec4d;
     typedef vector<4, int>          vec4i;
@@ -1114,12 +1134,12 @@ public:
         }
 
         template<int nLines, int lineSpan>
-        void write_frame(const math::matrix<nLines, lineSpan, RGBA32>& framedata)
+        void write_frame(math::matrix<nLines, lineSpan, RGBA32>& framedata)
         {
             void* texPtr;
             int texPitch;
             SDL_LockTexture(frame, nullptr, &texPtr, &texPitch);
-            memcpy(texPtr, framedata.get_data(), texPitch * framedata.rows());
+            memcpy(texPtr, framedata.data.get_data(), texPitch * framedata.rows());
             SDL_UnlockTexture(frame);
 
             SDL_RenderClear(renderer);
@@ -1133,6 +1153,7 @@ public:
 //TODO this class is temporary as fuck
 namespace renderer
 {
+    
     class rasterizer
     {
 public:
@@ -1167,16 +1188,21 @@ public:
             if(renderTargetSize.x == raster.cols() && renderTargetSize.y == raster.rows())
                 return raster;
 
-            //very slow
             math::matrix<math::DYNAMIC, math::DYNAMIC, output::RGBA32> renderTarget(renderTargetSize.y, renderTargetSize.x);
-            renderTarget.mutate([this, &renderTargetSize](output::RGBA32& pixel, int row, int col) -> void
-            {
-                constexpr uint halfPixel = 0.5;
-                float vCenter = float(row + halfPixel)/renderTargetSize.y; //[0, 1)
-                float hCenter = float(col + halfPixel)/renderTargetSize.x;
+            //very slow, why? calling the function is the slowest part!
+            //UPDATE : don't use std::function. ever. inline lambdas with template params.
+            //https://stackoverflow.com/questions/67615330/why-stdfunction-is-too-slow-is-cpu-cant-utilize-instruction-reordering
+            auto const ROWS = renderTarget.rows();
+            auto const COLS = renderTarget.cols();
+            for(size_t i = 0; i < ROWS ; ++i)
+                for(size_t j = 0; j < COLS; ++j)
+                {
+                    constexpr uint halfPixel = 0.5;
+                    float vCenter = float(i + halfPixel)/renderTargetSize.y; //[0, 1)
+                    float hCenter = float(j + halfPixel)/renderTargetSize.x;
 
-                pixel = this->raster(vCenter * raster.rows(), hCenter * raster.cols());
-            });
+                    renderTarget[i * renderTarget.cols() + j] = this->raster(vCenter * raster.rows(), hCenter * raster.cols());
+                }
             return renderTarget;
         }
     };
@@ -1187,10 +1213,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return -1;
 
-    constexpr uint wFramebuffer = 500;
-    constexpr uint hFramebuffer = 500;
-    constexpr uint wWindow = 500;
-    constexpr uint hWindow = 500;
+    constexpr uint wFramebuffer = 20;
+    constexpr uint hFramebuffer = 20;
+    constexpr uint wWindow = 1000;
+    constexpr uint hWindow = 1000;
 
     using namespace math;
     using namespace output;
@@ -1210,23 +1236,24 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     };
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
+    
+    list<float, 2, true> k(1.f, 2.f);
 
     bool quit = false;
+    ms_timer frameTimer;
     while(!quit)
     {
-
         SDL_Event e;
         while(SDL_PollEvent(&e))
             if(e.type == SDL_QUIT)
                 quit = true;
 
-        R.rasterize(vec2(0.5f, 0.5f), RGBA32({255, 0, 0 , 255}));
-ms_timer frameTimer;
+        R.rasterize(vec2(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
         auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
-        window.write_frame(test);
 auto frameDelta = frameTimer.clock();
+        window.write_frame(test);
 
-       std::cout << 1000/frameDelta.count() << " FPS" << '\n';
+       std::cout << frameDelta.count() << " ms" << '\n';
     }
     return 0;
 }
