@@ -21,8 +21,14 @@ namespace math
     constexpr uint DYNAMIC = 0;
     struct empty 
     {
-        empty& operator=(size_t){return *this;}
-        operator size_t()const{return size_t(0);}
+        template <typename...types>
+        empty(types...args){}
+        
+        template <typename...types>
+        empty& operator=(types...args){return *this;}
+        
+        template <typename T>
+        operator T()const{return T(0);}
     };
 
     template <size_t, typename, bool>
@@ -35,8 +41,8 @@ namespace math
         template<typename, size_t, bool>
         friend class list;
 
-        //can you make this compile time?
-        bool ownsData = true;
+        [[no_unique_address]] std::conditional_t<dim == 0, size_t, empty> dynamicSize;
+        [[no_unique_address]] std::conditional_t<inlined, empty, bool> ownsData = true;
 
         //TODO use template lambdas
         typedef std::function<T(size_t idx)> builder;
@@ -46,7 +52,6 @@ namespace math
         template <typename D>
         using reduction = std::function<D(T val, size_t idx, D prev)>;
 
-        [[no_unique_address]] std::conditional_t<dim == 0, size_t, empty> dynamicSize;
 protected:
         std::conditional_t<inlined, T[dim], T*> data;
 public:
@@ -375,7 +380,16 @@ public:
             stream << "}";
         }
 
-        virtual ~list()
+        /// @warning For memory efficency, this destructor is not virtual. 
+        /// As such, you should never use a list* to delete a derived type.
+        /// I.e. the following code snippet is illegal, where 'derived' is a type extending this class
+        ///
+        /// \code{.cpp}
+        /// list* base = new derived;
+        /// 
+        /// delete base;
+        /// \endcode
+        ~list()
         {
             if(!inlined && ownsData)
                 delete[] data;
@@ -1288,8 +1302,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     
-    list<float, 2, true> k(1.f, 2.f);
-    std::cout << k;
+    list<output::RGBA32, 3, true> s;
+    list<unsigned char, 4, true> k;
 
     bool quit = false;
     ms_timer frameTimer;
