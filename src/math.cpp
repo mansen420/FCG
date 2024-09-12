@@ -145,8 +145,8 @@ public:
         explicit list(const list<D, size, inl>& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
         
         template<size_t size, typename D, bool inl>
-        requires (dim >= size || size == DYNAMIC && std::is_convertible_v<D, T>)
-        explicit list(const list<D, size, inl>& copy, size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize) {*this = copy;}
+        requires (std::is_convertible_v<D, T>)
+        explicit list(const list<D, size, inl>& copy) requires(dim == DYNAMIC) : list(copy.size()) {*this = copy;}
         
         list(const list& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
         list(const list& copy) requires(dim == DYNAMIC) : list(copy.size()) {*this = copy;}
@@ -270,13 +270,15 @@ public:
         }
         list& mutate(mutation fnc)
         {
-            for(size_t i = 0; i < size(); ++i)
+            const auto SIZE = size();
+            for(size_t i = 0; i < SIZE; ++i)
                 fnc(this->data[i], i);
             return *this;
         }
         const list& for_each(process fnc)const
         {
-            for(size_t i = 0; i < size(); ++i)
+            const auto SIZE = size();
+            for(size_t i = 0; i < SIZE; ++i)
                 fnc(this->data[i], i);
             return *this;
         }
@@ -284,7 +286,8 @@ public:
         [[nodiscard]] D reduce(reduction<D> fnc, D initial = D(0)) const
         {
             D result = initial;
-            for(size_t i = 0; i < size(); ++i)
+            const auto SIZE = size();
+            for(size_t i = 0; i < SIZE; ++i)
                 result = fnc(this->data[i], i, result);
             return result;
         }
@@ -416,6 +419,7 @@ public:
         return sum;
     }
 
+    //TODO add support for inlined lisrs here
     template<typename D, size_t...sizes, typename...types>
     requires(std::is_convertible_v<types, D> && ...)
     [[nodiscard]] list<D, calc_comptime_size(sizes...)> join(const list<types, sizes>&...lists)
@@ -1141,12 +1145,16 @@ public:
     using inline_list = list<T, dim, true>;
 
     template <typename T>
-    using list3 = list<T, 3, true>;
+    using list4 = inline_list<T, 4>;
+    template <typename T>
+    using list3 = inline_list<T, 3>;
+    template <typename T>
+    using list2 = inline_list<T, 3>;
 
-    typedef inline_list<float, 3> list3f;
-    typedef inline_list<float, 3> list3i;
-    typedef inline_list<float, 3> list3d;
-    typedef inline_list<float, 3> list3u;
+    typedef list3<float>        list3f;
+    typedef list3<int>          list3i;
+    typedef list3<double>       list3d;
+    typedef list3<unsigned int> list3u;
 
     typedef vector<4, float>        vec4f;
     typedef vector<4, double>       vec4d;
@@ -1267,7 +1275,7 @@ public:
 
             math::matrix<math::DYNAMIC, math::DYNAMIC, output::RGBA32> renderTarget(renderTargetSize.y, renderTargetSize.x);
             //very slow, why? calling the function is the slowest part!
-            //UPDATE : don't use std::function. ever. inline lambdas with template params.
+            //UPDATE : don't use std::function. ever. inline lambdas with template params. //TODO
             //https://stackoverflow.com/questions/67615330/why-stdfunction-is-too-slow-is-cpu-cant-utilize-instruction-reordering
             auto const ROWS = renderTarget.rows();
             auto const COLS = renderTarget.cols();
@@ -1314,8 +1322,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     
-    list<list<unsigned char, 4, true>> s(500*500);   
-    RGBA32 k[100];
+    inline_list<float, 4> s(1.f, 2.f, 3.f, 4.f);
+    std::cout << s;
+    std::cout << list<float>(s);
 
     bool quit = false;
     ms_timer frameTimer;
@@ -1326,7 +1335,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
             if(e.type == SDL_QUIT)
                 quit = true;
 
-        R.rasterize(vec2(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
+        R.rasterize(vec2f(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
         auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
 auto frameDelta = frameTimer.clock();
         window.write_frame(test);
