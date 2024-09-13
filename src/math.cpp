@@ -38,8 +38,9 @@ namespace math
     requires (!(inlined && dim == DYNAMIC))
     class list
     {
-        template<typename, size_t, bool>
-        friend class list;
+        template<typename D, size_t size, bool inl>
+	requires (!(inl && size == DYNAMIC))
+	friend class list;
 
         [[no_unique_address]] std::conditional_t<dim == 0, size_t, empty> dynamicSize;
         [[no_unique_address]] std::conditional_t<inlined, empty, bool> ownsData = true;
