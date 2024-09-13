@@ -626,7 +626,7 @@ public:
         }
         [[nodiscard]] T sum()
         {
-            return reduce<T>([](T val, size_t idx, T prev)->T
+            return this->template reduce<T>([](T val, size_t idx, T prev)->T
             {
                 return prev + val;
             });
@@ -1327,7 +1327,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
             if(e.type == SDL_QUIT)
                 quit = true;
 
-        R.rasterize(vec2(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
+        R.rasterize(vec2f(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
         auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
 auto frameDelta = frameTimer.clock();
         window.write_frame(test);
