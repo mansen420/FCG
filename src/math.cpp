@@ -1,18 +1,15 @@
+#include <algorithm>
 #include <cstddef>
 #include <cassert>
 #include <cmath>
-#include <exception>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
-#include <variant>
 //IO
-#include <fstream>
-#include <streambuf>
+#include <iterator>
 #include <ostream>
-#include <sstream>
 
 #include <chrono>
-#include <concepts>
 
 #include "SDL.h"
 
