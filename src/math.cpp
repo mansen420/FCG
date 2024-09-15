@@ -283,7 +283,7 @@ public:
         {
             create(fnc, *this);
         }
-        explicit list(const builder& fnc) requires(dim != DYNAMIC) 
+        explicit list(const builder& fnc) requires(dim != DYNAMIC):list() 
         {
             create(fnc, *this);
         }
