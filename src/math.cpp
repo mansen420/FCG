@@ -431,9 +431,10 @@ public:
         /// \endcode
         ~list()
         {
-            if(!inlined && ownsData)
-                delete[] data;
+            free_data();
         }
+        void free_data()requires(inlined){}
+        void free_data()requires(!inlined){if(ownsData)delete[]data;}
     };
 
     template <size_t dim, typename T, bool inlined>
