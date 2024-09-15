@@ -75,23 +75,65 @@ public:
         /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
         /// @return 
         /// A non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
-        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) requires(!inlined)
+        list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx) requires(!inlined)
         {
             assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
             return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
         }
-
         /// @param fromIdx 
         /// Index of first element of the sublist, satisfying fromIdx <= toIdx
         /// @param toIdx 
         /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
         /// @return 
         /// A const non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
+        const list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx)const requires(!inlined) 
+        {
+            assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
+            return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
+        }
+        /** 
+         * @return
+         * A non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
+         */
+        template <size_t fromIdx, size_t toIdx>
+        requires (fromIdx + toIdx <= dim && fromIdx <= toIdx) 
+        list<T, toIdx - fromIdx> sublist() requires (!inlined && dim != DYNAMIC)
+        {
+           return list<T, toIdx - fromIdx>(this->data + fromIdx); 
+        }
+        /**
+         * @return 
+         * A non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
+         */
+        template <size_t fromIdx, size_t toIdx>
+        list<T, toIdx - fromIdx> sublist() requires (!inlined && dim == DYNAMIC)
+        {
+           assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
+           return list<T, toIdx - fromIdx>(this->data + fromIdx); 
+        } 
+        
+        /**
+         * @return
+         * An inline list, copying all element from fromIdx with a size of toIdx - fromIdx
+         */
+        template<size_t fromIdx, size_t toIdx>
+        requires (fromIdx + toIdx <= dim && fromIdx <= toIdx) 
+        constexpr list<T, toIdx - fromIdx, true> sublist()const requires(inlined)
+        {
+            list<T, toIdx - fromIdx, true> result;
+            //XXX perhaps invoking a copy here is not the best
+            std::copy(this->begin() + fromIdx, this->begin() + toIdx, result.begin());
+            return result;
+        }
+        //TODO make ctor that takes std::arrays as argument
+        list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) requires(!inlined)
+        {
+            return sublist(fromIdx, toIdx);
+        }
         const list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) const
         {
-            return this->operator()(fromIdx, toIdx);
+            return sublist(fromIdx, toIdx);
         }
-        //TODO make the compile time version of the above operator()
 
         const T* begin()const requires(!inlined){return this->data;}
         const T* end()const requires(!inlined){return this->data + this->size();}
@@ -111,7 +153,7 @@ public:
             return this->data[this->size() - 1];
         }
       
-        //                                      **copy semantics**
+        //                                  **copy semantics**
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
         template<size_t size, typename D, bool inl>
