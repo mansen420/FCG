@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -63,12 +64,23 @@ public:
             assert(idx < size());
             return this->data[idx];
         }
+        const T& operator[](size_t idx)const
+        {
+            assert(idx < size());
+            return this->data[idx];
+        }
         const T& operator()(size_t idx)const
         {
             assert(idx < size());
             return this->data[idx];
         }
         
+        //******************************************************************************************//
+        //                                      SUBLIST                                             //
+        //******************************************************************************************//
+
+        /// @brief
+        /// Get sublist spanning two indices specified in run-time. Use the compile-time version when possible.
         /// @param fromIdx 
         /// Index of first element of the sublist, satisfying fromIdx <= toIdx
         /// @param toIdx 
@@ -80,6 +92,9 @@ public:
             assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
             return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
         }
+
+        /// @brief
+        /// Get const sublist spanning two indices specified in run-time. Use the compile-time version when possible.
         /// @param fromIdx 
         /// Index of first element of the sublist, satisfying fromIdx <= toIdx
         /// @param toIdx 
@@ -91,7 +106,10 @@ public:
             assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
             return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
         }
+
         /** 
+         * @brief
+         * Get sublist spanning two indices specified at compile-time.
          * @return
          * A non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
          */
@@ -102,6 +120,8 @@ public:
            return list<T, toIdx - fromIdx>(this->data + fromIdx); 
         }
         /**
+         * @brief
+         * Get sublist spanning two indices specified at compile-time.        * 
          * @return 
          * A non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
          */
@@ -135,6 +155,10 @@ public:
             return sublist(fromIdx, toIdx);
         }
 
+        //******************************************************************************************//
+        //                                    ITERATORS                                             //
+        //******************************************************************************************//
+        
         const T* begin()const requires(!inlined){return this->data;}
         const T* end()const requires(!inlined){return this->data + this->size();}
         T* begin()requires(!inlined){return this->data;}
@@ -152,12 +176,14 @@ public:
             assert(this->size() > 0);
             return this->data[this->size() - 1];
         }
-      
-        //                                  **copy semantics**
+
+        //******************************************************************************************//
+        //                                   COPY SEMANTICS                                         //
+        //******************************************************************************************//     
 
         //this allows lists of varying sizes to copied into one another, is this too loose?
         template<size_t size, typename D, bool inl>
-        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        requires ( (dim >= size || dim * size == DYNAMIC) && std::is_convertible_v<D, T>)
         list& operator=(const list<D, size, inl>& rhs)
         {
             assert(this->size() >= rhs.size());
@@ -181,17 +207,19 @@ public:
         }
         
         template<size_t size, typename D, bool inl>
-        requires (dim >= size || size == DYNAMIC && std::is_convertible_v<D, T>)
+        requires ( (dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
         explicit list(const list<D, size, inl>& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
         
         template<size_t size, typename D, bool inl>
-        requires (dim >= size || size == DYNAMIC && std::is_convertible_v<D, T>)
+        requires ( (dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
         explicit list(const list<D, size, inl>& copy, size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize) {*this = copy;}
         
         list(const list& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
         list(const list& copy) requires(dim == DYNAMIC) : list(copy.size()) {*this = copy;}
 
-        //                                      **move semantics**
+        //******************************************************************************************//
+        //                                   MOVE SEMANTICS                                         //
+        //******************************************************************************************//     
 
         template<size_t size>
         requires(dim == size || size == DYNAMIC)
@@ -217,7 +245,7 @@ public:
         }
 
         template<size_t size, typename D, bool inl>
-        requires (dim >= size || dim * size == DYNAMIC && std::is_convertible_v<D, T>)
+        requires ( (dim >= size || dim * size == DYNAMIC) && std::is_convertible_v<D, T>)
         list& operator=(list<D, size, inl>&& rhs)
         {
             assert(this->size() >= rhs.size());
@@ -233,8 +261,10 @@ public:
                 (*this)[i] = std::move(rhs[i]);
             return *this;
         }
-        
-        //                                      **constructors**
+
+        //******************************************************************************************//
+        //                                   CONSTRUCTORS                                           //
+        //******************************************************************************************//     
 
         explicit list() requires (dim != DYNAMIC && !inlined) : data{new T[dim]}{}
         explicit list(const size_t dynamicSize) requires(dim == DYNAMIC && !inlined) : dynamicSize{dynamicSize}, data{new T[dynamicSize]}{}
@@ -345,7 +375,9 @@ public:
         template<typename D, typename...types>
         requires(std::is_convertible_v<types, D> && ...)
         friend list<D, DYNAMIC> join(const std::initializer_list<types>&...lists);
-
+        
+        //TODO add static and dynamic dimension version of this
+        //Also, this does a copy, not a move. Add require clase for D convertible to T
         template<typename D>
         operator list<D, dim>const()
         {
@@ -408,13 +440,20 @@ public:
             return result;
         }
         
+        /**
+         * @brief 
+         * Prints list as {x1 x2 x3 ... xn} where xi is the ith element and n is the size of the list.
+         * @param stream 
+         * Output stream to print to.
+         */
         inline void print(std::ostream& stream) const
         {
             stream << "{";
-            this->for_each([&stream, this](T value, size_t idx)
+            const auto SIZE = this->size();
+            this->for_each([&stream, SIZE](T value, size_t idx)
             {
                 stream << value;
-                if(idx != (this->size() - 1))
+                if(idx != (SIZE - 1))
                     stream << ' ';
             });
             stream << "}";
@@ -433,6 +472,7 @@ public:
         {
             free_data();
         }
+private:
         void free_data()requires(inlined){}
         void free_data()requires(!inlined){if(ownsData)delete[]data;}
     };
@@ -1325,7 +1365,6 @@ public:
         }
     };
 };
-
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
