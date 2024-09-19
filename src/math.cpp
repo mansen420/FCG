@@ -11,6 +11,7 @@
 #include <ostream>
 
 #include <chrono>
+#include <utility>
 
 #include "SDL.h"
 
@@ -1311,7 +1312,6 @@ public:
 //TODO this class is temporary as fuck
 namespace renderer
 {
-
     class rasterizer
     {
 public:
@@ -1333,7 +1333,7 @@ public:
         void rasterize(const math::vector<2, float>& worldLoc, const output::RGBA32& color)
         {
             //TODO this conversion is causing overflow.
-            //TODO implement submatrix()
+            //TOO implement submatrix()
             math::vector<3, uint> pixelLoc = WtoSCR * math::vector<3, float>(math::join<float>(worldLoc, math::list({1.f})));
             
             if(pixelLoc.x > raster.cols() || pixelLoc.y > raster.rows())
@@ -1363,6 +1363,31 @@ public:
                 }
             return renderTarget;
         }
+
+        void midpoint_line_draw(math::vec2f SCRp1, math::vec2f SCRp2, output::RGBA32 color = {0, 0, 0, 1}) //assume slope in [0, 1]
+        {
+            if(SCRp1.x > SCRp2.x)
+                std::swap(SCRp1, SCRp2); //perhaps better to keep references
+            
+            const float& x0 = SCRp1.x;
+            const float& y0 = SCRp1.y;
+            const float& y1 = SCRp2.y;
+            const float& x1 = SCRp2.x;
+
+            float x = x0;
+            float y = y0;
+
+            while(x < SCRp2.x)
+            {
+                math::vec2f midpoint = {x + 1.f, y + 0.5f};
+                float FxyAtMidpoint = (y0 - y1)*x + (x1 - x0)*y + x0*y1 - x1*y0;
+                if(FxyAtMidpoint < 0) //midpoint is under the line
+                    y++;
+                raster.element(y, x) = color;
+                x++;
+            }
+        }
+        
     };
 };
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
@@ -1370,8 +1395,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     if (SDL_Init(SDL_INIT_VIDEO) < 0)
         return -1;
 
-    constexpr uint wFramebuffer = 20;
-    constexpr uint hFramebuffer = 20;
+    constexpr uint wFramebuffer = 100;
+    constexpr uint hFramebuffer = 100;
     constexpr uint wWindow = 1000;
     constexpr uint hWindow = 1000;
 
@@ -1394,9 +1419,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     
-    list<list<unsigned char, 4, true>> s(500*500);   
-    RGBA32 k[100];
-
     bool quit = false;
     ms_timer frameTimer;
     while(!quit)
@@ -1406,7 +1428,9 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
             if(e.type == SDL_QUIT)
                 quit = true;
 
-        R.rasterize(vec2f(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
+        //R.rasterize(vec2f(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
+        R.midpoint_line_draw({0, 0}, {50, 1});
+
         auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
 auto frameDelta = frameTimer.clock();
         window.write_frame(test);
