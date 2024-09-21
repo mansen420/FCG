@@ -10,6 +10,7 @@
 #include <iterator>
 #include <ostream>
 #include <sys/types.h>
+#include <type_traits>
 #include <utility>
 
 constexpr uint DYNAMIC = 0;
@@ -80,7 +81,7 @@ public:
     /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
     /// @return 
     /// A non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
-    list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx) requires(!inlined)
+    list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx)
     {
         assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
         return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
@@ -94,12 +95,11 @@ public:
     /// index of one past the final element of the sublist, satisfying toIdx <= size() + fromIdx.
     /// @return 
     /// A const non-owning list pointing at the element at fromIdx, with a dynamic size of toIdx - fromIdx.
-    const list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx)const requires(!inlined) 
+    const list<T, DYNAMIC> sublist(size_t fromIdx, size_t toIdx)const 
     {
         assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
         return list<T, DYNAMIC>(this->data + fromIdx, toIdx - fromIdx);
     }
-
     /** 
      * @brief
      * Get sublist spanning two indices specified at compile-time.
@@ -108,36 +108,25 @@ public:
      */
     template <size_t fromIdx, size_t toIdx>
     requires (fromIdx + toIdx <= dim && fromIdx <= toIdx) 
-    list<T, toIdx - fromIdx> sublist() requires (!inlined && dim != DYNAMIC)
-    {
-       return list<T, toIdx - fromIdx>(this->data + fromIdx); 
-    }
-    /**
-     * @brief
-     * Get sublist spanning two indices specified at compile-time.        * 
-     * @return 
-     * A non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
-     */
-    template <size_t fromIdx, size_t toIdx>
-    list<T, toIdx - fromIdx> sublist() requires (!inlined && dim == DYNAMIC)
+    list<T, toIdx - fromIdx> sublist()
     {
        assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
        return list<T, toIdx - fromIdx>(this->data + fromIdx); 
     } 
-    
-    /**
+     /** 
+     * @brief
+     * Get const sublist spanning two indices specified at compile-time.
      * @return
-     * An inline list, copying all element from fromIdx with a size of toIdx - fromIdx
+     * A const non-owning list pointing at the element at fromIdx, with a static size of toIdx - fromIdx
      */
-    template<size_t fromIdx, size_t toIdx>
+    template <size_t fromIdx, size_t toIdx>
     requires (fromIdx + toIdx <= dim && fromIdx <= toIdx) 
-    constexpr list<T, toIdx - fromIdx, true> sublist()const requires(inlined)
+    const list<T, toIdx - fromIdx> sublist()const
     {
-        list<T, toIdx - fromIdx, true> result;
-        //XXX perhaps invoking a copy here is not the best
-        std::copy(this->begin() + fromIdx, this->begin() + toIdx, result.begin());
-        return result;
-    }
+       assert (fromIdx + toIdx <= this->size() && fromIdx <= toIdx);
+       return list<T, toIdx - fromIdx>(this->data + fromIdx); 
+    }   
+
     //TODO make ctor that takes std::arrays as argument
     list<T, DYNAMIC> operator()(size_t fromIdx, size_t toIdx) requires(!inlined)
     {
@@ -539,3 +528,36 @@ constexpr bool any_dynamic(types...args)
     return ((args == 0) ||...);
 }
 
+template <typename T, size_t dim>
+using inline_list = list<T, dim, true>;
+
+template <typename T>
+using heap_list = list<T, DYNAMIC, false>;
+
+template <typename T, size_t stride = DYNAMIC, size_t nrStrides = DYNAMIC>
+class list_view : public list<list<T, stride>, nrStrides, nrStrides == DYNAMIC ? false : true>
+{
+public:
+    list_view(T* beginAddr) requires(stride != DYNAMIC && nrStrides != DYNAMIC) :
+    list<list<T, stride>, nrStrides>([=](size_t idx)
+    {
+        return list<T, stride>(beginAddr + idx * stride);
+    }){}
+    list_view(T* beginAddr, size_t dynamicNrStrides) requires(stride != DYNAMIC && nrStrides == DYNAMIC) :
+    list<list<T, stride>, DYNAMIC>([=](size_t idx)
+    {
+        return list<T, stride>(beginAddr + idx * stride);
+    }, dynamicNrStrides){}
+    list_view(T* beginAddr, size_t dynamicStride) requires(stride == DYNAMIC && nrStrides != DYNAMIC) :
+    list<list<T, DYNAMIC>, nrStrides>([=](size_t idx)
+    {
+        return list<T, DYNAMIC>(beginAddr + idx * stride, dynamicStride);
+    }, nrStrides){}
+    list_view(T* beginAddr, size_t dynamicStride, size_t dynamicNrStrides) requires(stride == DYNAMIC && nrStrides == DYNAMIC) :
+    list<list<T, DYNAMIC>, DYNAMIC>([=](size_t idx)
+    {
+        return list<T, DYNAMIC>(beginAddr + idx * dynamicStride, dynamicStride);
+    }, dynamicNrStrides){}
+};
+template <typename T>
+list_view(T*) -> list_view<T, DYNAMIC, DYNAMIC>;

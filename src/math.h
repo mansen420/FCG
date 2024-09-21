@@ -4,7 +4,6 @@
 #include <cstddef>
 #include <cassert>
 #include <cmath>
-#include <cstdint>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
@@ -14,23 +13,6 @@
 
 namespace math
 {
-    template <typename T>
-    class list_view : public list<list<T, DYNAMIC>, DYNAMIC>
-    {
-        const size_t stride, offset;
-public:
-        list_view(T* beginAddr, size_t stride, size_t offset, size_t nrStrides) : 
-        list<list<T, DYNAMIC>, DYNAMIC>([=](size_t idx)
-        {
-            return list<T, DYNAMIC>(beginAddr + idx * (stride + offset), stride);
-        }, nrStrides),
-        stride{stride},
-        offset{offset} 
-        {}
-    };
-    template <typename T>
-    list_view(T*) -> list_view<T>;
-
     template <int n_rows, int n_cols, typename T>
     requires (n_rows >= 0 && n_cols >= 0)
     class matrix;
@@ -172,7 +154,7 @@ public:
             this->mutate([this](T& val, size_t){ val = val / this->last();});
             return *this;
         }
-        [[nodiscard]] T sum()
+        [[nodiscard]] T sum()const
         {
             return this->template reduce<T>([](T val, size_t idx, T prev)->T
             {
@@ -685,17 +667,6 @@ public:
 
     template<int nRows, int nCols, typename T>
     using transformation = matrix<nRows, nCols, T>;
-
-    template <typename T, size_t dim>
-    using inline_list = list<T, dim, true>;
-
-    template <typename T>
-    using list3 = list<T, 3, true>;
-
-    typedef inline_list<float, 3> list3f;
-    typedef inline_list<float, 3> list3i;
-    typedef inline_list<float, 3> list3d;
-    typedef inline_list<float, 3> list3u;
 
     typedef vector<4, float>        vec4f;
     typedef vector<4, double>       vec4d;
