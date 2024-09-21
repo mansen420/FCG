@@ -8,13 +8,13 @@
 #include <functional>
 #include <iostream>
 #include <ostream>
+#include <type_traits>
 
 #include "list.h"
 
 namespace math
 {
-    template <int n_rows, int n_cols, typename T>
-    requires (n_rows >= 0 && n_cols >= 0)
+    template <size_t, size_t, typename, bool = true>
     class matrix;
 
     //Pure vector class
@@ -22,8 +22,7 @@ namespace math
     class vector : public list<T, dim, inlined>
     {
 protected:
-        template <int n_rows, int n_cols, typename D>
-        requires (n_rows >= 0 && n_cols >= 0)
+        template <size_t, size_t, typename, bool>
         friend class matrix;
 public:
         using list<T, dim, inlined>::list;
@@ -172,7 +171,6 @@ public:
     {
         return u*coeff;
     }
-
     template <typename T, size_t dim> 
     inline vector<dim, T> operator*(T coeff, vector<dim, T> u)
     {
@@ -183,413 +181,19 @@ public:
         return vector<3>({a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x});
     }
 
-    template <int n_rows, int n_cols = n_rows, typename T = float>
-    requires (n_rows >= 0 && n_cols >= 0)
-    class matrix
+    template <size_t n_rows, size_t n_cols = n_rows, typename T = float, bool owns_data>
+    class matrix : public list_view<T, n_rows, n_cols>
     {
-        template <int r, int c, typename D>
-        requires (r >= 0 && c >= 0)
+        template <size_t, size_t, typename, bool>
         friend class matrix;
-
-        [[no_unique_address]] std::conditional_t<n_rows == DYNAMIC, size_t, empty> rowSize;
-        [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> colSize; 
+        std::conditional_t<owns_data, list<T, n_rows * n_cols, false>, empty> data;
 public:
-        T& operator[](size_t idx) {return this->data[idx];}
-        vector<n_rows*n_cols, T> data;
+        matrix(list<T, n_rows * n_cols, false>&& data) requires(owns_data && !any_dynamic(n_rows, n_cols)) :
+        list_view<T, n_rows, n_cols>::list_view(data.begin()),
+        data{data}{}
 
-        static matrix get_identity(size_t dynamicSize = 0)
-        {
-            static_assert(n_rows == n_cols);
-            matrix identity(dynamicSize);
-            matrix::create([](int row, int col)
-            {
-                if (row == col)
-                    return T(1);
-                else
-                    return T(0);
-            }, identity);
-            return identity;
-        }
-        
-        inline size_t cols() const
-        {
-            if(n_cols == DYNAMIC)
-                return colSize;
-            return n_cols;
-        }
-        inline size_t rows() const
-        {
-            if(n_rows == DYNAMIC)
-                return rowSize;
-            return n_rows;
-        }
-        
-
-        typedef std::function<T(T value, int row, int col)>      Fmapping;
-        typedef std::function<T(int row, int col)>              Fbuilding;
-        typedef std::function<void(T& value, int row, int col)> Fmutation;
-        typedef std::function<void(T value, int row, int col)>    Faction;
-        
-        matrix(const matrix& other) : matrix(other.rows(), other.cols())
-        {
-            *this = other;
-        }
-        matrix& operator=(const matrix& other)
-        {
-            if(this == &other)
-                return *this;
-            this->data = other.data;
-            return *this;
-        }
-        
-        template<size_t nRows, size_t nCols>
-        requires (nRows == DYNAMIC || nRows == n_rows && nCols == DYNAMIC || nCols == n_cols)
-        matrix& operator=(const matrix<nRows, nCols, T>& other)
-        {
-            assert(other.rows() == this->rows() && other.cols() == this->cols());
-            if(this == &other)
-                return *this;
-            this->data = other.data;
-            return *this;
-        }
-
-        explicit matrix(size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
-        data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
-        {
-            if(n_rows == DYNAMIC)
-                rowSize = dynamicSizeRows;
-            if(n_cols == DYNAMIC)
-                colSize = dynamicSizeCols;
-        }
-        
-        explicit matrix(const std::initializer_list<T>& list, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
-        data(list)
-        {
-            if(n_rows == DYNAMIC)
-                rowSize = dynamicSizeRows;
-            if(n_cols == DYNAMIC)
-                colSize = dynamicSizeCols;
-            assert(list.size() == this->cols() * this->rows());
-        }
-        
-        explicit matrix(T fillValue, size_t dynamicSizeRows, size_t dynamicSizeCols) requires(n_cols + n_rows == DYNAMIC) : 
-        data(fillValue, static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
-        {
-            rowSize = dynamicSizeRows;
-            colSize = dynamicSizeCols;            
-        }
-        explicit matrix(T fillValue) requires(n_cols * n_rows != DYNAMIC) : 
-        data(fillValue)
-        {
-        }
-        
-        explicit matrix(Fbuilding builder, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : 
-        data(static_cast<size_t>(dynamicSizeRows*dynamicSizeCols))
-        {
-            if(n_rows == DYNAMIC)
-                rowSize = dynamicSizeRows;
-            if(n_cols == DYNAMIC)
-                colSize = dynamicSizeCols;
-            create(builder, *this);
-        }
-        explicit matrix(const vector<n_rows*n_cols, T>& data, size_t dynamicSizeRows = 0, size_t dynamicSizeCols = 0) : data{data} 
-        {
-            if(n_rows == DYNAMIC)
-                rowSize = dynamicSizeRows;
-            if(n_cols == DYNAMIC)
-                colSize = dynamicSizeCols;
-            assert(data.size() == this->rows() * this->cols());
-        }
-
-        void set_data(const std::initializer_list<T>& list)
-        {
-            assert(list.size() == this->cols() * this->rows());
-            this->data = vector<n_rows * n_cols, T>(list, this->rows()*this->cols());
-        }
-        void set_data(const std::initializer_list<std::initializer_list<T>>& list)
-        {
-            assert(list.size() == this->rows());
-            const auto ROWS = rows();
-            for(size_t i = 0; i < ROWS; ++i)
-            {
-                assert(list.begin()[i].size() == cols());
-                this->row(i) = list.begin()[i];
-            }
-        }
-
-        T operator()(size_t r, size_t c)const{return data(r*cols() + c);}
-
-        [[nodiscard]]inline matrix map(Fmapping mapping) const
-        {
-            matrix<n_rows, n_cols, T> result(rows(), cols());
-            for(size_t i = 0; i < rows(); ++i)
-                for(size_t j = 0; j < cols(); ++j)
-                    result.data[i*cols() + j] = mapping((*this)(i, j), i, j);
-            //XXX returning by copy!
-            return result;
-        }
-        inline static void create(Fbuilding build, matrix& result)
-        {
-            for(size_t i = 0; i < result.rows(); ++i)
-                for(size_t j = 0; j < result.cols(); ++j)
-                    result.data[i*result.cols() + j] = build(i, j);
-        }
-        inline matrix& mutate(const Fmutation& mutation)
-        {
-            for(size_t i = 0; i < rows(); ++i)
-                for(size_t j = 0; j < cols(); ++j)
-                    mutation(this->data[i * cols() + j], i, j);
-            return *this;
-        }
-        inline const matrix& for_each(Faction action) const
-        {
-            for(size_t i = 0; i < rows(); ++i)
-                for(size_t j = 0; j < cols(); ++j)
-                    action((*this)(i, j), i, j);
-            return *this;
-        }
-
-        const static inline matrix<n_rows, n_cols, T> zero = matrix(T(0));
-        const static inline matrix<n_rows, n_cols, T> I = matrix::get_identity();
-
-        //BEWARE! modifying this vector will mutate the matrix. Use vector::copy for a deep copy.
-        inline vector<n_cols, T> row(size_t idx)
-        {
-            assert(idx < rows());
-            const size_t startIdx = idx * cols();
-            vector<n_cols, T> result(&this->data[startIdx], cols());
-            return result;
-        }
-        inline vector<n_cols, T> row_cpy(size_t idx)const
-        {
-            assert(idx < rows());
-            const size_t startIdx = idx * cols();
-            const auto COLS = cols();
-            vector<n_cols, T> result(cols());
-            for(size_t i = 0; i < COLS; ++i)
-                result[i] = this->data(i + startIdx);
-            return result;
-        }
-        //A vector of column elements
-        inline vector<n_rows, T> col(size_t idx)const
-        {
-            assert(idx < cols());
-            vector<n_rows, T> result;
-            for(size_t i = 0; i < n_rows; ++i)
-                result.data[i] = this->data(idx + i*cols());
-            return result;
-        }
-        
-        void mutate_rows(const std::function<void(vector<n_cols, T>& row, size_t idx)>& mutation)
-        {
-            for(size_t i = 0; i < rows(); ++i)
-            {
-                vector<n_cols, T> row(this->row(i).data, cols());
-                mutation(row, i);
-            }
-        }
-        void for_each_row(const std::function<void(const vector<n_cols, T>& row, size_t idx)>& action)const
-        {
-            for(size_t i = 0; i < rows(); ++i)
-                action(row(i).copy(), i);
-        }
-            
-        template<size_t dim>
-        requires (dim == n_cols || dim == DYNAMIC)
-        void set_row(size_t idx, const vector<dim, T>& row)
-        {
-            assert(row.size() == cols());
-            this->row(idx) = row;
-        }
-        
-        [[nodiscard]]matrix map_rows(const std::function<vector<n_cols, T>(const vector<n_cols, T>& row, size_t idx)>& mapping) const
-        {
-            matrix result;
-            for(size_t i = 0; i < rows(); ++i)
-                result.set_row(i, mapping(this->row_copy(i), i));
-            return result;
-        }
-        
-        template <size_t nRows, size_t nCols>
-        matrix& insert_rows(const matrix<nRows, nCols, T>& rows, size_t fromIdx) 
-        requires (n_rows == DYNAMIC && (nCols == n_cols || n_cols == DYNAMIC))
-        {
-            assert(rows.cols() == this->cols());
-            this->data.insert(rows.data, fromIdx * rows.cols());
-            this->rowSize += rows.rows();
-
-            return *this;
-        }
-        
-        template <size_t nRows, size_t nCols>
-        void push_rows(const matrix<nRows, nCols, T>& rows){insert_rows(rows, this->rows());} 
-
-        //Returns reference to submatrix. Allows mutation! 
-        //TODO add copy() method
-        matrix<DYNAMIC, n_cols, T> subview(size_t fromIdx, size_t nRows)
-        {
-            vector<DYNAMIC, T> dataWindow(&this->data[fromIdx * this->cols()], nRows * this->cols());
-            return matrix<DYNAMIC, n_cols, T>(dataWindow, nRows, this->cols());
-        }
-
-        T& element(size_t r, size_t c)
-        {
-            return data[r*cols() + c];
-        } 
-        const T& element(size_t r, size_t c)const
-        {
-            return data(r*cols() + c);
-        }
-
-        void print(std::ostream& stream) const
-        {
-            stream << "[";
-            (*this).for_each([&](T value, int row, int col)
-            {
-                if (col == 0)
-                    stream << "{";
-                stream << value;
-                if(col == cols() - 1)
-                    if (row == rows() - 1)
-                        stream << "}";
-                    else
-                        stream << "}, ";
-                else 
-                    stream << ' ';
-            });
-            stream << "]";
-        }
-
-        template<int rhs_rows, int rhs_cols>
-        matrix<n_rows, n_cols, T> operator+ (const matrix<rhs_rows, rhs_cols, T> rhs) const
-        requires ( (rhs_rows == n_rows || rhs_rows == DYNAMIC || n_rows == DYNAMIC) && (rhs_cols == n_cols || rhs_cols == DYNAMIC || n_cols == DYNAMIC) )
-        {
-            assert(rhs.rows() == this->rows());
-            assert(rhs.cols() == this->cols());
-            return this->map([&](T value, int row, int col){return value + rhs(row, col);});
-        }
-        matrix operator-() const
-        {
-            return this->map([](T val, int row, int col){return -val;});
-        }
-        matrix operator-(const matrix<n_rows, n_cols, T> rhs) const
-        {
-            return (*this) + -rhs;
-        }
-
-        template <int nr_rows, int nr_cols>
-        requires (nr_rows == n_cols || nr_rows == DYNAMIC)
-        matrix<n_rows, nr_cols> operator*(const matrix<nr_rows, nr_cols, T> rhs) const
-        {
-            const matrix& lhs = (*this);
-
-            assert(rhs.rows() == lhs.cols());
-
-            const size_t mul_size = rhs.rows();
-
-            matrix<n_rows, nr_cols> result (this->rows(), rhs.cols());
-
-            matrix<n_rows, nr_cols>::create([&](int row, int col)
-            {
-                T sum{0};
-                for (size_t i = 0; i < mul_size; ++i)
-                    sum += lhs(row, i) * rhs(i, col);
-                return sum;
-            }, result);
-
-            return result;
-        }
-        
-        template<size_t dim>
-        requires (dim == n_cols || dim == DYNAMIC || n_cols == DYNAMIC)
-        matrix<n_rows, 1, T> operator*(const vector<dim, T>& rhs) const
-        {
-            assert(rhs.size() == this->cols());
-            return *this * rhs.col();
-        }
-        
-        matrix operator*(const float coeff) const
-        {
-            return map([&](T value, int row, int col){return coeff*value;});
-        }
-
-        [[nodiscard]]inline matrix<n_cols, n_rows, T> transpose()const
-        {
-            matrix<n_cols, n_rows> result(cols(), rows());
-            matrix<n_cols, n_rows, T>::create([&](int row, int col)
-            {
-                return (*this)(col, row);
-            }, result);
-            return result;
-        }
-        [[nodiscard]]inline matrix reciprocal()
-        {
-            return map([](T value, int row, int col)
-            {
-                return value == T(0) ? value : 1.0/value; 
-            });
-        }
-
-        //Returns deep copy of matrix. Especially useful when you want to copy a subview()
-        matrix copy()
-        {
-            return this->map_rows([](const vector<n_cols, T>& row, size_t idx)
-            {
-                return row.copy();
-            });
-        } 
-        
-        //row or column vectors convert to pure vectors
-        //be careful of returning non-owned data 
-        template <size_t dim, typename D>
-        requires(dim == n_cols || dim == n_rows || dim * n_rows * n_cols == DYNAMIC)
-        operator vector<dim, D>() requires (n_cols == 1 || n_cols == DYNAMIC || n_rows == 1 || n_rows == DYNAMIC)
-        {
-            assert(cols() == 1 || rows() == 1);
-            return data;
-        }
-
-        void resize_rows(size_t nRows) requires(n_rows == DYNAMIC)
-        {
-            this->data.resize(nRows * cols());
-            this->rowSize = nRows;
-        }
-        void add_row_capacity(size_t nRows) requires(n_rows == DYNAMIC)
-        {
-            resize_rows(this->rows() + nRows);
-        }
-
-        void resize_cols(size_t nCols) requires(n_cols == DYNAMIC)
-        {
-            this->data.resize(nCols * rows());
-            this->colSize = nCols;
-        }
-        void add_col_capacity(size_t nCols) requires(n_cols == DYNAMIC)
-        {
-            resize_cols(nCols);
-        }
-
-        void resize(size_t nRows, size_t nCols) requires(n_rows == DYNAMIC && n_cols == DYNAMIC)
-        {
-            this->data.resize(nRows * nCols);
-            this->colSize = nCols;
-            this->rowSize = nRows;
-        }
-
-        template <int nRows, int nCols>
-        requires (nCols <= n_cols || nCols * n_cols == DYNAMIC)
-        void overwrite_rows_with(const matrix<nRows, nCols, T>& data, size_t startIdx)
-        {
-            assert(startIdx < this->rows());
-            assert(startIdx + data.rows() <= this->rows());
-            assert(data.cols() <= this->cols());
-            
-            const auto MINSIZE = std::min(data.rows(), this->rows() - startIdx);
-            for (size_t i = 0; i < MINSIZE; ++i)
-            {
-                this->row(i + startIdx) = data.row_cpy(i);
-            }
-        }
+        matrix() requires(owns_data && !any_dynamic(n_rows, n_cols)) :
+        list_view<T, n_rows, n_cols>::list_view(data.begin()){}
     };
     template <int n_rows, int n_cols = n_rows, typename T>
     inline std::ostream& operator<<(std::ostream& stream, const matrix<n_rows, n_cols, T>& m){m.print(stream); return stream;}
@@ -600,6 +204,11 @@ public:
         return m*coeff;
     }
 
+    int main()
+    {
+        matrix<2> d(list<float, 4>([](size_t idx) -> float{return idx;}));
+        return 0;
+    }
 
     template <int nRows, int nCols, typename T, size_t dim>
     requires (dim == nRows || dim == DYNAMIC || nRows == DYNAMIC)

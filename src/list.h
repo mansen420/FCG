@@ -225,7 +225,7 @@ public:
     {
         other.ownsData = false;
     }
-
+    
     template<size_t size, typename D, bool inl>
     requires ( (dim >= size || dim * size == DYNAMIC) && std::is_convertible_v<D, T>)
     list& operator=(list<D, size, inl>&& rhs)
@@ -236,11 +236,14 @@ public:
             (*this)[i] = std::move(rhs[i]);
         return *this;
     }
+    
     list& operator=(list&& rhs) requires(!inlined && dim == DYNAMIC)
     {
-        const auto SIZE = this->size();
-        for(size_t i = 0; i < SIZE; ++i)
-            (*this)[i] = std::move(rhs[i]);
+        assert(this->size() == rhs.size());
+        free_data();
+        this->ownsData = true;
+        this->data = rhs.data;
+        rhs.ownsData = false;
         return *this;
     }
 
@@ -531,8 +534,8 @@ constexpr bool any_dynamic(types...args)
 template <typename T, size_t dim>
 using inline_list = list<T, dim, true>;
 
-template <typename T>
-using heap_list = list<T, DYNAMIC, false>;
+template <typename T, size_t dim = DYNAMIC>
+using heap_list = list<T, dim, false>;
 
 template <typename T, size_t stride = DYNAMIC, size_t nrStrides = DYNAMIC>
 class list_view : public list<list<T, stride>, nrStrides, nrStrides == DYNAMIC ? false : true>

@@ -5,7 +5,6 @@
 #include <cstdlib>
 
 #include <chrono>
-#include <ostream>
 #include <utility>
 
 #include "list.h"
@@ -121,10 +120,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
         }
     };
     
-    inline_list<float, 100> data([](size_t idx){return (float)idx;});
-    list_view rows(data.begin(), 5, 10);
-    std::cout << data.sublist(0, 12);
     
+
     renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
     bool quit = false;
     ms_timer frameTimer;
