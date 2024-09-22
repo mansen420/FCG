@@ -14,11 +14,12 @@
 
 namespace math
 {
-    template <size_t, size_t, typename, bool = true>
+    template <size_t, size_t, typename, bool>
     class matrix;
 
     //Pure vector class
-    template <size_t dim = DYNAMIC, typename T = float, bool inlined = false>
+    //TODO add template deduction guides
+    template <size_t dim = DYNAMIC, typename T = float, bool inlined = true>
     class vector : public list<T, dim, inlined>
     {
 protected:
@@ -26,68 +27,24 @@ protected:
         friend class matrix;
 public:
         using list<T, dim, inlined>::list;
-
-        template<size_t size>
-        requires (dim >= size || dim * size == DYNAMIC)
-        vector& operator=(const vector<size, T>& other)
-        {
-            list<T, dim>::operator=(other);
-            return *this;
-        }
-        vector& operator=(const vector& other)
-        {
-            if(this == &other)
-                return *this;
-            list<T, dim>::operator=(other);
-            return *this;
-        };
-
-        template<size_t size, typename D, bool inl>
-        requires ((dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
-        vector(const vector<size, D, inl>& other) requires(dim != DYNAMIC) : list<T, dim, inlined>(other){}
-        
-        template<size_t size, typename D, bool inl>
-        requires (std::is_convertible_v<D, T>)
-        vector(const vector<size, D, inl>& other) requires(dim == DYNAMIC) :
-        list<T, dim, inlined>(other, other.size()){}
-
-        vector(const vector& other) : list<T, dim, inlined>(other){}
-        
-        vector(const list<T, dim>& other) : list<T, dim, inlined>(other){}
-
-        template<size_t size, typename D, bool inl>
-        requires ((dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
-        vector(const list<D, size>& other)requires(dim != DYNAMIC) : list<T, dim>(other){}
-
-        template<size_t size, typename D, bool inl>
-        requires (std::is_convertible_v<D, T>)
-        vector(const list<D, size>& other, size_t dynamicSize)requires(dim == DYNAMIC) : list<T, dim>(other, dynamicSize){}
-
-        const T& x = this->data[0];
-        const T& y = this->data[1];
-        const T& z = this->data[2];
-        const T& w = this->data[3];
-
-        const T& r = x;
-        const T& g = y;
-        const T& b = z;
-        const T& a = w;
+        using list<T, dim, inlined>::operator =;
 
         static inline vector zero = vector(T(0));
 
-        [[nodiscard]] inline matrix<dim, 1, T> col()const
-        {
-            return matrix<dim, 1, T>(*this, this->size());
-        }
-        [[nodiscard]] inline matrix<1, dim, T> row()const
-        {
-            return matrix<1, dim, T>(*this, this->size());
-        }
+//        [[nodiscard]] inline matrix<dim, 1, T> col()const
+//        {
+//            return matrix<dim, 1, T>(*this, this->size());
+//        }
+//        [[nodiscard]] inline matrix<1, dim, T> row()const
+//        {
+//            return matrix<1, dim, T>(*this, this->size());
+//        }
 
+        //TODO these functions should not care about whether the vectors are inlined or not
         inline vector operator+ (const vector& rhs) const
         {
             const vector& lhs = *this;
-            return create([lhs, &rhs](size_t idx)
+            return vector([lhs, &rhs](size_t idx)
             {
                 return lhs[idx] + rhs[idx];
             });
@@ -113,10 +70,10 @@ public:
         }
         inline vector operator* (float coeff)const
         {
-            return this->map([&coeff](T val, size_t idx) -> T
+            return vector(this->map([&coeff](T val, size_t idx) -> T
             {
                 return val * coeff;
-            });
+            }));
         }
         inline vector operator/(float coeff)const
         {
@@ -178,23 +135,86 @@ public:
     }
     inline vector<3> cross(const vector<3>& a, const vector<3>& b)
     {
-        return vector<3>({a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x});
+        return vector<3>({a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]});
     }
-
-    template <size_t n_rows, size_t n_cols = n_rows, typename T = float, bool owns_data>
-    class matrix : public list_view<T, n_rows, n_cols>
+//Just make the matrix a list primarily, then optionally we can pass the list to a list viwe for row processing
+    template <size_t n_rows, size_t n_cols = n_rows, typename T = float, bool inlined = true>
+    class matrix : public list<T, n_rows * n_cols, inlined>
     {
         template <size_t, size_t, typename, bool>
         friend class matrix;
-        std::conditional_t<owns_data, list<T, n_rows * n_cols, false>, empty> data;
-public:
-        matrix(list<T, n_rows * n_cols, false>&& data) requires(owns_data && !any_dynamic(n_rows, n_cols)) :
-        list_view<T, n_rows, n_cols>::list_view(data.begin()),
-        data{data}{}
+        
 
-        matrix() requires(owns_data && !any_dynamic(n_rows, n_cols)) :
-        list_view<T, n_rows, n_cols>::list_view(data.begin()){}
+        [[no_unique_address]] std::conditional_t<n_cols == DYNAMIC, size_t, empty> dynamicNrCols; // == stride size
+public:
+        using list<T, n_rows * n_cols, inlined>::list;
+        using list<T, n_cols * n_rows, inlined>::operator =;
+
+        static matrix<n_rows, n_rows, T, inlined> get_identity() requires(n_rows == n_cols && !any_dynamic(n_rows, n_cols))
+        {
+            return matrix<n_rows, n_rows, T, inlined>([](size_t idx)
+            {
+                auto rowcol = matrix::convert_idx_to_rowcol(idx);
+                if(rowcol[0] == rowcol[1])
+                    return T(1);
+                else
+                    return T(0);
+            });
+        }
+        static matrix<n_rows, n_rows, T, inlined> get_identity(size_t dimension) requires(any_dynamic(n_rows, n_cols))
+        {
+            return matrix<n_rows, n_rows, T, inlined>([](size_t idx)
+            {
+                auto rowcol = matrix::convert_idx_to_rowcol(idx);
+                if(rowcol[0] == rowcol[1])
+                    return T(1);
+                else
+                    return T(0);
+            });
+        }
+        static inline matrix I = get_identity();
+
+        inline constexpr size_t nr_cols()requires(n_cols != DYNAMIC){return n_cols;}
+        inline size_t nr_cols()requires(n_cols == DYNAMIC){return dynamicNrCols;}
+        inline constexpr size_t nr_rows()requires(n_rows != DYNAMIC){return n_rows;}
+        inline size_t nr_rows()requires(n_rows == DYNAMIC){return this->size()/nr_cols();}
+        
+        template<size_t row, size_t col>
+        inline T& element() requires(!any_dynamic(n_rows, n_cols))
+        {
+            static_assert(row < n_rows && col < n_cols, "Bounds checking failed");
+            return (*this)[row * nr_cols() + col];
+        }
+        template<size_t row, size_t col>
+        inline const T& element() const requires(!any_dynamic(n_rows, n_cols))
+        {
+            static_assert(row < n_rows && col < n_cols, "Bounds checking failed");
+            return (*this)[row * nr_cols() + col];
+        }
+
+        inline T& element(size_t row, size_t col) 
+        {
+            assert(row < nr_rows() && col < nr_cols());
+            return (*this)[row * nr_cols() + col];
+        }
+        inline const T& element(size_t row, size_t col)const
+        {
+            assert(row < nr_rows() && col < nr_cols());
+            return (*this)[row * nr_cols() + col];
+        }
+
+
+        [[nodiscard]] inline static ::list<size_t, 2, true> convert_idx_to_rowcol(size_t idx)requires(!any_dynamic(n_rows, n_cols))
+        {return {idx/n_cols, idx%n_cols};}
+        
+        
+        [[nodiscard]] list_view<T, n_cols, n_rows> row_view() requires(!any_dynamic(n_rows, n_cols))
+        {
+            return list_view<T, n_cols, n_rows>(this->begin());
+        }
     };
+
+/*
     template <int n_rows, int n_cols = n_rows, typename T>
     inline std::ostream& operator<<(std::ostream& stream, const matrix<n_rows, n_cols, T>& m){m.print(stream); return stream;}
 
@@ -202,12 +222,6 @@ public:
     inline matrix<n_rows, n_cols, T> operator*(const float coeff, const matrix<n_rows, n_cols, T> m)
     {
         return m*coeff;
-    }
-
-    int main()
-    {
-        matrix<2> d(list<float, 4>([](size_t idx) -> float{return idx;}));
-        return 0;
     }
 
     template <int nRows, int nCols, typename T, size_t dim>
@@ -265,7 +279,7 @@ public:
         }, result);
         return result;
     }
-
+*/
     // convenience typedefs
 
     template <int dim, typename T = float>

@@ -314,7 +314,7 @@ public:
             new (out.begin() + i) T (fnc(i));
     }
     
-    const list& map(mapping fnc) const
+    const list map(mapping fnc) const
     {
         list result(size_t(this->dynamicSize));
         create([&fnc, this](size_t idx) -> T
@@ -541,23 +541,25 @@ template <typename T, size_t stride = DYNAMIC, size_t nrStrides = DYNAMIC>
 class list_view : public list<list<T, stride>, nrStrides, nrStrides == DYNAMIC ? false : true>
 {
 public:
+    typedef list<list<T, stride>, nrStrides, nrStrides == DYNAMIC ? false : true> parent;
+
     list_view(T* beginAddr) requires(stride != DYNAMIC && nrStrides != DYNAMIC) :
-    list<list<T, stride>, nrStrides>([=](size_t idx)
+    parent([=](size_t idx)
     {
         return list<T, stride>(beginAddr + idx * stride);
     }){}
     list_view(T* beginAddr, size_t dynamicNrStrides) requires(stride != DYNAMIC && nrStrides == DYNAMIC) :
-    list<list<T, stride>, DYNAMIC>([=](size_t idx)
+    parent([=](size_t idx)
     {
         return list<T, stride>(beginAddr + idx * stride);
     }, dynamicNrStrides){}
     list_view(T* beginAddr, size_t dynamicStride) requires(stride == DYNAMIC && nrStrides != DYNAMIC) :
-    list<list<T, DYNAMIC>, nrStrides>([=](size_t idx)
+    parent([=](size_t idx)
     {
         return list<T, DYNAMIC>(beginAddr + idx * stride, dynamicStride);
     }, nrStrides){}
     list_view(T* beginAddr, size_t dynamicStride, size_t dynamicNrStrides) requires(stride == DYNAMIC && nrStrides == DYNAMIC) :
-    list<list<T, DYNAMIC>, DYNAMIC>([=](size_t idx)
+    parent([=](size_t idx)
     {
         return list<T, DYNAMIC>(beginAddr + idx * dynamicStride, dynamicStride);
     }, dynamicNrStrides){}

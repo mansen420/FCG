@@ -9,10 +9,10 @@
 
 #include "list.h"
 #include "math.h"
-#include "output.h"
+//#include "output.h"
 
 //TODO this class is temporary as fuck
-namespace renderer
+/*namespace renderer
 {
     class rasterizer
     {
@@ -92,52 +92,32 @@ public:
         }
         
     };
+};*/
+struct ms_timer
+{
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+    [[nodiscard]] std::chrono::milliseconds clock()
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
+    }
 };
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
-    if (SDL_Init(SDL_INIT_VIDEO) < 0)
-        return -1;
-
-    constexpr uint wFramebuffer = 100;
-    constexpr uint hFramebuffer = 100;
-    constexpr uint wWindow = 1000;
-    constexpr uint hWindow = 1000;
-
     using namespace math;
-    using namespace output;
+    matrix<2> s({1.f, 2.f, 3.f, 4.f});
 
-    window window("title", 200, 200, wWindow, hWindow);
+    vec2f d(1.f, 2.f);
+    vec2f e(d);
+    list<float, 2, true> f(e);
+   
+    //TODO remove the loose size thing from list::operator =
+    s = list<float, 4, true>(1.f);
 
-    const vector<2> Wx(0.f, 1.f);
-    const vector<2> Wy(0.f, 1.f);
-    
-    struct ms_timer
+    s.row_view().mutate([](list<float, 2, false>& row, size_t)->void
     {
-        std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
-        [[nodiscard]] std::chrono::milliseconds clock()
-        {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start);
-        }
-    };
-    
-    
-
-    renderer::rasterizer R(wFramebuffer, hFramebuffer, Wx, Wy);
-    bool quit = false;
-    ms_timer frameTimer;
-    while(!quit)
-    {
-        SDL_Event e;
-        while(SDL_PollEvent(&e))
-            if(e.type == SDL_QUIT)
-                quit = true;
-
-        //R.rasterize(vec2f(0.f + 0.001f*float(frameTimer.clock().count()), 0.5f), RGBA32({255, 0, 0 , 255}));
-        R.midpoint_line_draw({0, 0}, {50, 1});
-
-        auto test = R.get_framebuffer(vec2u(wWindow, hWindow));
-auto frameDelta = frameTimer.clock();
-        window.write_frame(test);
-    }
+        vector<2, float, false> vr (row.begin());
+        vr = vr + vector<2, float, false>(1.f, 2.f);
+    });
+    std::cout << s;
     return 0;
 }
