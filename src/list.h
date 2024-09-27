@@ -163,16 +163,15 @@ public:
     //                                   COPY SEMANTICS                                         //
     //******************************************************************************************//     
 
-    //this allows lists of varying sizes to copied into one another, is this too loose?
-    template<size_t size, typename D, bool inl>
-    requires ( (dim >= size || dim * size == DYNAMIC) && std::is_convertible_v<D, T>)
-    list& operator=(const list<D, size, inl>& rhs)
+    template <typename D>
+    requires(std::is_convertible_v<T, D>)
+    list& operator=(const list<D, dim, inlined>& rhs)
     {
-        assert(this->size() >= rhs.size());
+        assert(this->size() == rhs.size());
         std::copy(rhs.begin(), rhs.end(), this->begin());
         return *this;
     }
-    
+    //TODO won't this fault on DYNAMIC sizes at some point?
     list& operator=(const list& rhs)
     {
         if(this == &rhs)
@@ -188,12 +187,12 @@ public:
         return *this;
     }
     
-    template<size_t size, typename D, bool inl>
-    requires ( (dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
-    explicit list(const list<D, size, inl>& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
+    template<typename D, bool inl>
+    requires (std::is_convertible_v<D, T>)
+    explicit list(const list<D, dim, inl>& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
     
     template<size_t size, typename D, bool inl>
-    requires ( (dim >= size || size == DYNAMIC) && std::is_convertible_v<D, T>)
+    requires (std::is_convertible_v<D, T>)
     explicit list(const list<D, size, inl>& copy, size_t dynamicSize) requires(dim == DYNAMIC) : list(dynamicSize) {*this = copy;}
     
     list(const list& copy) requires(dim != DYNAMIC) : list() {*this = copy;}
@@ -225,18 +224,9 @@ public:
     {
         other.ownsData = false;
     }
-    
-    template<size_t size, typename D, bool inl>
-    requires ( (dim >= size || dim * size == DYNAMIC) && std::is_convertible_v<D, T>)
-    list& operator=(list<D, size, inl>&& rhs)
-    {
-        assert(this->size() >= rhs.size());
-        const auto SIZE = this->size();
-        for(size_t i = 0; i < SIZE; ++i)
-            (*this)[i] = std::move(rhs[i]);
-        return *this;
-    }
-    
+
+    list(list&& other)requires(inlined) : data{std::move(other.data)}{}
+
     list& operator=(list&& rhs) requires(!inlined && dim == DYNAMIC)
     {
         assert(this->size() == rhs.size());
@@ -305,6 +295,12 @@ public:
 
     //                                      ****
 
+
+    /// @brief Builds list in place by assigning the ouput of fnc to an object of type T for every index.
+    /// @param fnc 
+    /// Builder function. Returns T for every index in out.
+    /// @param out 
+    /// List to be built.
     static void create(const builder& fnc, list& out)
     {
         //TODO the return type of fnc might be expensive ?
@@ -314,18 +310,26 @@ public:
             new (out.begin() + i) T (fnc(i));
     }
     
-    const list map(mapping fnc) const
+    //TODO not ideal impl
+    const list map(mapping fnc)const requires(dim == DYNAMIC)
     {
-        list result(size_t(this->dynamicSize));
-        create([&fnc, this](size_t idx) -> T
+        return list([&fnc, this](size_t idx) -> T
         {
             return fnc(this->data[idx], idx);
-        }, result);
-        return result;
+        }, this->size());
     }
+    const list map(mapping fnc) const requires(dim != DYNAMIC) 
+    {
+        return list([&fnc, this](size_t idx) -> T
+        {
+            return fnc(this->data[idx], idx);
+        });
+    }
+
     list& mutate(mutation fnc)
     {
-        for(size_t i = 0; i < size(); ++i)
+        const auto SIZE = this->size();
+        for(size_t i = 0; i < SIZE; ++i)
             fnc(this->data[i], i);
         return *this;
     }
